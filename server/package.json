@@ -1,0 +1,20 @@
+{
+  "name": "kortana-terminus",
+  "version": "1.0.0",
+  "description": "Terminus — Kortana's persistent home server: state sync, Google Drive (5TB) archive, and Ollama phi3 brain with Claude/Gemini fallback.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "auth": "node scripts/get-refresh-token.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "googleapis": "^140.0.1",
+    "ws": "^8.18.0"
+  }
+}

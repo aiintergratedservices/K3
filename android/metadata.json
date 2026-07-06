@@ -1,0 +1,6 @@
+{
+  "name": "Kortana",
+  "description": "An evolving cognitive AI companion with a local SQLite neural registry and interactive 3D particle chassis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

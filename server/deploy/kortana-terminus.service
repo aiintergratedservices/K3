@@ -1,0 +1,18 @@
+# systemd unit — alternative to PM2 on a Linux server.
+#   sudo cp deploy/kortana-terminus.service /etc/systemd/system/
+#   sudo systemctl enable --now kortana-terminus
+[Unit]
+Description=Kortana Terminus server (state sync + Drive archive + brain)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/k3/server
+ExecStart=/usr/bin/node index.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
