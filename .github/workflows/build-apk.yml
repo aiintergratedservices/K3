@@ -38,11 +38,11 @@ jobs:
           /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager \
             "platforms;android-36.1" "platforms;android-36" "build-tools;36.0.0" > /dev/null || true
 
-      - name: Install Gradle 9.2.1 (AGP 9.1.1 needs Gradle 9.x)
+      - name: Install Gradle 9.3.1 (AGP 9.1.1 needs Gradle >= 9.3.1)
         run: |
-          wget -q https://services.gradle.org/distributions/gradle-9.2.1-bin.zip -O /tmp/gradle.zip
+          wget -q https://services.gradle.org/distributions/gradle-9.3.1-bin.zip -O /tmp/gradle.zip
           unzip -q /tmp/gradle.zip -d /tmp/gradle
-          echo "/tmp/gradle/gradle-9.2.1/bin" >> "$GITHUB_PATH"
+          echo "/tmp/gradle/gradle-9.3.1/bin" >> "$GITHUB_PATH"
 
       - name: Build debug APK (signed with the committed debug.keystore)
         working-directory: android
