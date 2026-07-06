@@ -15,4 +15,5 @@
 .cxx
 local.properties
 .env
-debug.keystore
+# debug.keystore is deliberately committed: every build (CI + local) must sign
+# with the same key or sideload upgrades fail with a signature mismatch.

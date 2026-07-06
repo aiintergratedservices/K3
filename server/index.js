@@ -124,6 +124,14 @@ function broadcast(obj) {
 }
 
 wss.on('connection', (ws, req) => {
+  // WS uses the same key as the HTTP API (native clients send the header).
+  if (API_KEY) {
+    const header = req.headers['authorization'] || '';
+    if (header !== API_KEY && header !== `Bearer ${API_KEY}`) {
+      ws.close(4401, 'unauthorized');
+      return;
+    }
+  }
   ws.deviceName = 'unknown';
   ws.on('message', (raw) => {
     try {
@@ -151,8 +159,12 @@ setInterval(() => broadcast({ type: 'heartbeat', at: Date.now(), awakeDevices: a
 // --- Boot ---
 (async () => {
   await drive.init();
-  server.listen(PORT, () => {
-    console.log(`[terminus] Kortana's Terminus server online on port ${PORT}.`);
-    if (!API_KEY) console.warn('[terminus] TERMINUS_API_KEY not set — API is open. Fine for localhost/Termux, set a key before exposing to the internet.');
+  // Without an API key the server only ever binds to localhost, so an open
+  // API can never be reached from off the device. Set TERMINUS_API_KEY (and
+  // HOST=0.0.0.0) to serve other devices on the LAN/internet.
+  const host = API_KEY ? (process.env.HOST || '0.0.0.0') : '127.0.0.1';
+  server.listen(PORT, host, () => {
+    console.log(`[terminus] Kortana's Terminus server online at ${host}:${PORT}.`);
+    if (!API_KEY) console.warn('[terminus] TERMINUS_API_KEY not set — bound to localhost only. Set a key to allow other devices to connect.');
   });
 })();
