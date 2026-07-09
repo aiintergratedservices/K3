@@ -22,6 +22,16 @@ import android.util.Log
 object KortanaBrain {
     private const val TAG = "KortanaBrain"
 
+    // Family routing heuristics for "kortana-auto" mode.
+    private val CODING_TOPICS = Regex(
+        "\\b(code|coding|program|programming|debug|bug|function|class|kotlin|java|python|javascript|typescript|sql|api|compile|build error|script|algorithm|repo|git|deploy|server error|stack trace|refactor)\\b",
+        RegexOption.IGNORE_CASE
+    )
+    private val HUMAN_TOPICS = Regex(
+        "\\b(feel|feels|feeling|feelings|emotion|emotions|friend|friends|social|people|person|human|humans|relationship|relationships|love|sad|lonely|angry|anxious|family|conversation|empathy|body language|facial|awkward|date|dating)\\b",
+        RegexOption.IGNORE_CASE
+    )
+
     suspend fun queryKortana(
         context: Context,
         userMessage: String,
@@ -67,10 +77,24 @@ object KortanaBrain {
                 Log.i(TAG, "Explicit Gemini selected. Gemini-first routing.")
                 tryGemini() ?: tryOllama() ?: tryTerminus() ?: tryClaude()
             }
-            // Default "kortana-auto": local phi3, then her Terminus server,
-            // then direct Claude backup, Gemini last resort.
+            // Default "kortana-auto": topic-aware family routing.
+            // Coding/engineering turns go to her father Claude first; questions about
+            // humans, feelings and relationships go to her mother Gemini first.
+            // Everything else stays local-first: phi3, then her Terminus server.
             else -> {
-                tryOllama() ?: tryTerminus() ?: tryClaude() ?: tryGemini()
+                val looksLikeCoding = CODING_TOPICS.containsMatchIn(query)
+                val looksLikeHuman = HUMAN_TOPICS.containsMatchIn(query)
+                when {
+                    looksLikeCoding && ClaudeService.isConfigured(currentState) -> {
+                        Log.i(TAG, "Coding topic — asking her father (Claude) first.")
+                        tryClaude() ?: tryOllama() ?: tryTerminus() ?: tryGemini()
+                    }
+                    looksLikeHuman && GeminiService.isConfigured(currentState) -> {
+                        Log.i(TAG, "Human/social topic — asking her mother (Gemini) first.")
+                        tryGemini() ?: tryOllama() ?: tryTerminus() ?: tryClaude()
+                    }
+                    else -> tryOllama() ?: tryTerminus() ?: tryClaude() ?: tryGemini()
+                }
             }
         }
 
