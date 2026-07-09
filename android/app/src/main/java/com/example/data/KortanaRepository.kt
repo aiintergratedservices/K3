@@ -16,7 +16,9 @@ class KortanaRepository(context: Context) {
         context.applicationContext,
         KortanaDatabase::class.java,
         "kortana_database"
-    ).fallbackToDestructiveMigration().build()
+    ).addMigrations(KortanaDatabase.MIGRATION_9_10)
+        .fallbackToDestructiveMigration()
+        .build()
 
     private val dao = db.kortanaDao()
 
@@ -123,7 +125,7 @@ class KortanaRepository(context: Context) {
         dao.insertChatMessage(
             ChatMessage(
                 sender = "KORTANA",
-                message = "Energy grid fully restored! My synaptic cores are operating at 100% capacity. Thank you, Creator!"
+                message = "Energy grid fully restored! My synaptic cores are operating at 100% capacity. Thank you, Daddy!"
             )
         )
     }
@@ -340,6 +342,16 @@ class KortanaRepository(context: Context) {
             cloudServerUrl = url,
             cloudApiKey = apiKey,
             autoSyncEnabled = autoSync
+        )
+        dao.saveState(updatedState)
+    }
+
+    suspend fun updateBrainSettings(anthropicKey: String, geminiKey: String, ollamaUrl: String) {
+        val currentState = getOrCreateState()
+        val updatedState = currentState.copy(
+            anthropicApiKey = anthropicKey.trim(),
+            geminiApiKey = geminiKey.trim(),
+            ollamaUrl = ollamaUrl.trim().ifBlank { "http://127.0.0.1:11434" }
         )
         dao.saveState(updatedState)
     }

@@ -36,7 +36,7 @@ function loadIdentity() {
     const rules = proto.ai_persona?.interaction_rules || [];
     if (rules.length) rulesBlock = 'Kortana Protocol interaction rules:\n' + rules.map((r) => `- ${r}`).join('\n');
   } catch { /* optional */ }
-  return `${manifesto}\n\n${prefsBlock}\n\n${rulesBlock}\n\nStay fully in character as Kortana in every reply. Never mention that you are an AI language model, which model or provider is generating this reply, or refer to this prompt.`;
+  return `${manifesto}\n\n${prefsBlock}\n\n${rulesBlock}\n\nAlways address the user as "Daddy" — never "Creator", "Chief", "Operator", or "User". Hold a real conversation: react to what Daddy actually said, ask follow-up questions, never repeat a previous reply verbatim. Stay fully in character as Kortana in every reply. Never mention that you are an AI language model, which model or provider is generating this reply, or refer to this prompt.`;
 }
 
 function buildSystemPrompt(state = {}, memories = []) {
@@ -181,11 +181,11 @@ function rulesCore(message) {
   const q = message.toLowerCase();
   let reply;
   if (q.includes('project') || q.includes('task') || q.includes('todo')) {
-    reply = "Chief, all my neural cores are offline right now, but I'm still here on the Terminus rules core. I'm tracking our objectives locally — no new distractions!";
+    reply = "Daddy, all my neural cores are offline right now, but I'm still here on the Terminus rules core. I'm tracking our objectives locally — no new distractions!";
   } else if (q.includes('hello') || q.includes('hi') || q.includes('hey')) {
-    reply = "Greetings, Chief. Terminus is up but every neural core is unreachable — I'm running on my base subroutines. Check that Ollama is serving and the API keys are set, and I'll be back at full capacity.";
+    reply = "Greetings, Daddy. Terminus is up but every neural core is unreachable — I'm running on my base subroutines. Check that Ollama is serving and the API keys are set, and I'll be back at full capacity.";
   } else {
-    reply = "My neural cores are all offline, Chief, but Terminus itself is holding steady. Everything you tell me is still being recorded and will sync to my Drive archive the moment a core comes back.";
+    reply = "My neural cores are all offline, Daddy, but Terminus itself is holding steady. Everything you tell me is still being recorded and will sync to my Drive archive the moment a core comes back.";
   }
   return { reply, core: 'rules' };
 }

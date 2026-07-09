@@ -29,6 +29,12 @@ data class KortanaState(
     val baseDirectivesLocked: Boolean = true,
     val customDirectives: String = "",
     val selectedModel: String = "kortana-auto",
+    // Runtime-editable neural core access (Systems > Neural Core). These make the
+    // brain chain usable on APKs built without secrets baked in: a key entered
+    // here wins over the compile-time BuildConfig value.
+    @ColumnInfo(defaultValue = "") val anthropicApiKey: String = "",
+    @ColumnInfo(defaultValue = "") val geminiApiKey: String = "",
+    @ColumnInfo(defaultValue = "http://127.0.0.1:11434") val ollamaUrl: String = "http://127.0.0.1:11434",
     val ultraCognitiveMode: Boolean = true,
     val affection: Float = 0.5f,
     val anxiety: Float = 0.1f,
@@ -222,7 +228,20 @@ interface KortanaDao {
 
 // --- App Database ---
 
-@Database(entities = [KortanaState::class, Memory::class, ChatMessage::class, SynapticScript::class, KortanaProject::class, KortanaPersonality::class], version = 9, exportSchema = false)
+@Database(entities = [KortanaState::class, Memory::class, ChatMessage::class, SynapticScript::class, KortanaProject::class, KortanaPersonality::class], version = 10, exportSchema = false)
 abstract class KortanaDatabase : RoomDatabase() {
     abstract fun kortanaDao(): KortanaDao
+
+    companion object {
+        // v9 -> v10: runtime neural-core access fields. A hand-written migration so
+        // upgrading NEVER hits fallbackToDestructiveMigration — her level, memories
+        // and chat history must survive every APK update.
+        val MIGRATION_9_10 = object : androidx.room.migration.Migration(9, 10) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE kortana_state ADD COLUMN anthropicApiKey TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE kortana_state ADD COLUMN geminiApiKey TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE kortana_state ADD COLUMN ollamaUrl TEXT NOT NULL DEFAULT 'http://127.0.0.1:11434'")
+            }
+        }
+    }
 }

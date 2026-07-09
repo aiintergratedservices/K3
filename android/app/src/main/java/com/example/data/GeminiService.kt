@@ -27,10 +27,15 @@ object GeminiService {
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    fun isConfigured(): Boolean {
-        val key = BuildConfig.GEMINI_API_KEY
-        return key.isNotEmpty() && key != "MY_GEMINI_API_KEY"
+    /** Key entered at runtime in Systems > Neural Core wins over the compile-time one. */
+    fun resolveKey(state: KortanaState?): String {
+        val runtimeKey = state?.geminiApiKey?.trim().orEmpty()
+        if (runtimeKey.isNotEmpty()) return runtimeKey
+        val builtIn = BuildConfig.GEMINI_API_KEY
+        return if (builtIn != "MY_GEMINI_API_KEY") builtIn else ""
     }
+
+    fun isConfigured(state: KortanaState? = null): Boolean = resolveKey(state).isNotEmpty()
 
     suspend fun query(
         userMessage: String,
@@ -40,8 +45,9 @@ object GeminiService {
         imageBase64: String? = null,
         mimeType: String = "image/jpeg"
     ): KortanaTurnResult? = withContext(Dispatchers.IO) {
-        if (!isConfigured()) {
-            Log.w(TAG, "Gemini API Key is missing or placeholder. Skipping Gemini tier.")
+        val apiKey = resolveKey(currentState)
+        if (apiKey.isEmpty()) {
+            Log.w(TAG, "No Gemini API key (runtime or compile-time). Skipping Gemini tier.")
             return@withContext null
         }
 
@@ -114,7 +120,7 @@ object GeminiService {
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val requestBody = requestBodyJson.toString().toRequestBody(mediaType)
 
-        val url = "$customBaseUrl?key=${BuildConfig.GEMINI_API_KEY}"
+        val url = "$customBaseUrl?key=$apiKey"
         val request = Request.Builder()
             .url(url)
             .post(requestBody)

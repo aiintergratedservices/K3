@@ -20,7 +20,11 @@ import java.util.concurrent.TimeUnit
  */
 object OllamaService {
     private const val TAG = "OllamaService"
-    private const val BASE_URL = "http://127.0.0.1:11434"
+    private const val DEFAULT_BASE_URL = "http://127.0.0.1:11434"
+
+    /** Daemon URL is editable at runtime in Systems > Neural Core. */
+    fun resolveBaseUrl(state: KortanaState?): String =
+        state?.ollamaUrl?.trim()?.trimEnd('/')?.ifEmpty { null } ?: DEFAULT_BASE_URL
 
     // Preferred local models, in order. First one found installed wins.
     private val PREFERRED_MODELS = listOf("phi3.5", "phi3", "phi3:mini")
@@ -53,9 +57,9 @@ object OllamaService {
     }
 
     /** Asks the local daemon which phi3 variant is installed. Null = Ollama unreachable. */
-    private fun detectInstalledModel(): String? {
+    fun detectInstalledModel(baseUrl: String = DEFAULT_BASE_URL): String? {
         return try {
-            val request = Request.Builder().url("$BASE_URL/api/tags").get().build()
+            val request = Request.Builder().url("$baseUrl/api/tags").get().build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return null
                 val body = response.body?.string() ?: return null
@@ -86,7 +90,8 @@ object OllamaService {
         systemInstructionText: String,
         imageBase64: String? = null
     ): KortanaTurnResult? = withContext(Dispatchers.IO) {
-        val modelName = detectInstalledModel() ?: return@withContext null
+        val baseUrl = resolveBaseUrl(currentState)
+        val modelName = detectInstalledModel(baseUrl) ?: return@withContext null
         Log.i(TAG, "Local core online. Using model: $modelName")
 
         val messagesArray = JSONArray()
@@ -125,7 +130,7 @@ object OllamaService {
                 .put("response_format", JSONObject().put("type", "json_object"))
 
             val request = Request.Builder()
-                .url("$BASE_URL/v1/chat/completions")
+                .url("$baseUrl/v1/chat/completions")
                 .post(requestBodyJson.toString().toRequestBody(mediaType))
                 .build()
 
@@ -157,7 +162,7 @@ object OllamaService {
                     .put("format", "json")
 
                 val request = Request.Builder()
-                    .url("$BASE_URL/api/chat")
+                    .url("$baseUrl/api/chat")
                     .post(requestBodyJson.toString().toRequestBody(mediaType))
                     .build()
 

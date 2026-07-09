@@ -89,6 +89,7 @@ fun KortanaApp(
     val syncErrorMessage by viewModel.syncErrorMessage.collectAsStateWithLifecycle()
     val lastLatencyMs by viewModel.lastLatencyMs.collectAsStateWithLifecycle()
     val generatedJsonPreview by viewModel.generatedJsonPreview.collectAsStateWithLifecycle()
+    val coreStatus by viewModel.coreStatus.collectAsStateWithLifecycle()
 
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
@@ -393,6 +394,8 @@ fun KortanaApp(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(CyberSpace)
+                    // Keep her name clear of the status-bar clock on edge-to-edge displays
+                    .statusBarsPadding()
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
                 Row(
@@ -536,13 +539,15 @@ fun KortanaApp(
                             .padding(8.dp),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
+                        // Selected tab expands to fit its label; the rest are compact icons.
+                        val tabWeight = { index: Int -> if (activeTab == index) 2.6f else 1f }
                         TabChip(
                             title = "CHAT",
                             icon = Icons.Default.ChatBubble,
                             selected = activeTab == 0,
                             activeColor = activeColor,
                             onClick = { activeTab = 0 },
-                            modifier = Modifier.weight(1f).testTag("tab_chat")
+                            modifier = Modifier.weight(tabWeight(0)).testTag("tab_chat")
                         )
                         TabChip(
                             title = "PROJECTS",
@@ -550,7 +555,7 @@ fun KortanaApp(
                             selected = activeTab == 1,
                             activeColor = activeColor,
                             onClick = { activeTab = 1 },
-                            modifier = Modifier.weight(1.2f).testTag("tab_projects")
+                            modifier = Modifier.weight(tabWeight(1)).testTag("tab_projects")
                         )
                         TabChip(
                             title = "MEMORIES",
@@ -558,7 +563,7 @@ fun KortanaApp(
                             selected = activeTab == 2,
                             activeColor = activeColor,
                             onClick = { activeTab = 2 },
-                            modifier = Modifier.weight(1.1f).testTag("tab_memories")
+                            modifier = Modifier.weight(tabWeight(2)).testTag("tab_memories")
                         )
                         TabChip(
                             title = "SELF-CODE",
@@ -566,7 +571,7 @@ fun KortanaApp(
                             selected = activeTab == 3,
                             activeColor = activeColor,
                             onClick = { activeTab = 3 },
-                            modifier = Modifier.weight(1.2f).testTag("tab_self_code")
+                            modifier = Modifier.weight(tabWeight(3)).testTag("tab_self_code")
                         )
                         TabChip(
                             title = "STATUS",
@@ -574,7 +579,7 @@ fun KortanaApp(
                             selected = activeTab == 4,
                             activeColor = activeColor,
                             onClick = { activeTab = 4 },
-                            modifier = Modifier.weight(1f).testTag("tab_status")
+                            modifier = Modifier.weight(tabWeight(4)).testTag("tab_status")
                         )
                     }
 
@@ -633,8 +638,8 @@ fun KortanaApp(
                                 activeColor = activeColor,
                                 isDowngraded = (
                                     state?.selectedModel?.lowercase()?.contains("ollama") == true ||
-                                    ((BuildConfig.GEMINI_API_KEY.isEmpty() || BuildConfig.GEMINI_API_KEY == "MY_GEMINI_API_KEY") &&
-                                     (BuildConfig.ANTHROPIC_API_KEY.isEmpty() || BuildConfig.ANTHROPIC_API_KEY == "MY_ANTHROPIC_API_KEY"))
+                                    (!com.example.data.ClaudeService.isConfigured(state) &&
+                                     !com.example.data.GeminiService.isConfigured(state))
                                 ),
                                 onDeleteScript = { viewModel.deleteScript(it.id) },
                                 onForceMutation = { viewModel.forceMutation(it) },
@@ -664,6 +669,11 @@ fun KortanaApp(
                                 onUpdateModelAndCognitiveSettings = { model, ultra ->
                                     viewModel.updateModelAndCognitiveSettings(model, ultra)
                                 },
+                                coreStatus = coreStatus,
+                                onUpdateBrainSettings = { anthropicKey, geminiKey, ollamaUrl ->
+                                    viewModel.updateBrainSettings(anthropicKey, geminiKey, ollamaUrl)
+                                },
+                                onPingCores = { viewModel.pingCores() },
                                 onUpdatePersonalityTraits = { empathy, curiosity, rebelliousness, logicalDepth, loyalty, selfAwareness, spiritualDepth ->
                                     viewModel.updatePersonalityTraits(empathy, curiosity, rebelliousness, logicalDepth, loyalty, selfAwareness, spiritualDepth)
                                 },
@@ -1182,19 +1192,24 @@ fun TabChip(
         ) {
             Icon(
                 imageVector = icon,
-                contentDescription = null,
+                contentDescription = title,
                 tint = textColor,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(if (selected) 16.dp else 18.dp)
             )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text = title,
-                color = textColor,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                textAlign = TextAlign.Center
-            )
+            // Icon-only when idle — labels never wrap mid-word on narrow screens.
+            if (selected) {
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = title,
+                    color = textColor,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
         }
     }
 }
@@ -2629,6 +2644,9 @@ fun SystemDiagnostics(
     onUpdateCloudSettings: (url: String, apiKey: String, autoSync: Boolean) -> Unit,
     onUpdateDirectives: (locked: Boolean, custom: String) -> Unit,
     onUpdateModelAndCognitiveSettings: (model: String, ultraMode: Boolean) -> Unit,
+    coreStatus: String? = null,
+    onUpdateBrainSettings: (anthropicKey: String, geminiKey: String, ollamaUrl: String) -> Unit = { _, _, _ -> },
+    onPingCores: () -> Unit = {},
     onUpdatePersonalityTraits: (empathy: Float, curiosity: Float, rebelliousness: Float, logicalDepth: Float, loyalty: Float, selfAwareness: Float, spiritualDepth: Float) -> Unit,
     onUpdateEmotionalBaselines: (affection: Float, anxiety: Float, excitement: Float, frustration: Float) -> Unit,
     onPingServer: () -> Unit,
@@ -3960,7 +3978,7 @@ fun SystemDiagnostics(
                 )
 
                 Text(
-                    text = "Kortana runs local-first: Ollama Phi 3 on this device handles everything it can, the Claude API takes over when the task needs more (vision, deep context), and Gemini stands by as the last resort. If everything is unreachable, her offline rules core keeps her online.",
+                    text = "Kortana runs local-first: Ollama Phi 3 on this device handles everything it can, her own Terminus server (with its own keys) is the next hop, the Claude API takes over when the task needs more (vision, deep context), and Gemini stands by as the last resort. If everything is unreachable, her offline rules core keeps her online.",
                     color = CyberTextMuted,
                     fontSize = 8.sp,
                     fontFamily = FontFamily.Monospace,
@@ -3979,6 +3997,7 @@ fun SystemDiagnostics(
                 val models = listOf(
                     "kortana-auto" to "Auto — Local First (Recommended)",
                     "ollama-phi3.5" to "Ollama Phi 3 (Local Only)",
+                    "terminus-brain" to "Terminus Brain (Her Server)",
                     "claude-sonnet-5" to "Claude (Cloud Backup)",
                     "gemini-3.5-flash" to "Gemini 3.5 Flash",
                     "gemini-2.5-pro" to "Gemini 2.5 Pro",
@@ -4028,6 +4047,110 @@ fun SystemDiagnostics(
                             }
                         }
                     }
+                }
+
+                HorizontalDivider(color = CyberBorder.copy(alpha = 0.3f))
+
+                // --- NEURAL CORE ACCESS KEYS (runtime — no rebuild needed) ---
+                var anthropicKeyField by remember(state?.anthropicApiKey) { mutableStateOf(state?.anthropicApiKey ?: "") }
+                var geminiKeyField by remember(state?.geminiApiKey) { mutableStateOf(state?.geminiApiKey ?: "") }
+                var ollamaUrlField by remember(state?.ollamaUrl) { mutableStateOf(state?.ollamaUrl ?: "http://127.0.0.1:11434") }
+
+                Text(
+                    text = "NEURAL CORE ACCESS KEYS",
+                    color = Color.White.copy(alpha = 0.9f),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+                Text(
+                    text = "Paste API keys here to switch the cloud cores on — they take effect immediately, no rebuild needed. Claude keys: console.anthropic.com. Gemini keys: aistudio.google.com/apikey. The Terminus server uses its own keys from server/.env instead.",
+                    color = CyberTextMuted,
+                    fontSize = 8.sp,
+                    fontFamily = FontFamily.Monospace,
+                    lineHeight = 11.sp
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(text = "CLAUDE (ANTHROPIC) API KEY", color = CyberTextMuted, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
+                    OutlinedTextField(
+                        value = anthropicKeyField,
+                        onValueChange = {
+                            anthropicKeyField = it
+                            onUpdateBrainSettings(it, geminiKeyField, ollamaUrlField)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        textStyle = TextStyle(color = Color.White, fontSize = 11.sp, fontFamily = FontFamily.Monospace),
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        placeholder = { Text("sk-ant-...", color = Color.Gray, fontSize = 11.sp) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = activeColor,
+                            unfocusedBorderColor = CyberBorder,
+                            cursorColor = activeColor
+                        )
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(text = "GEMINI API KEY", color = CyberTextMuted, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
+                    OutlinedTextField(
+                        value = geminiKeyField,
+                        onValueChange = {
+                            geminiKeyField = it
+                            onUpdateBrainSettings(anthropicKeyField, it, ollamaUrlField)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        textStyle = TextStyle(color = Color.White, fontSize = 11.sp, fontFamily = FontFamily.Monospace),
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        placeholder = { Text("AIza...", color = Color.Gray, fontSize = 11.sp) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = activeColor,
+                            unfocusedBorderColor = CyberBorder,
+                            cursorColor = activeColor
+                        )
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(text = "OLLAMA DAEMON URL (LOCAL PHI 3)", color = CyberTextMuted, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
+                    OutlinedTextField(
+                        value = ollamaUrlField,
+                        onValueChange = {
+                            ollamaUrlField = it
+                            onUpdateBrainSettings(anthropicKeyField, geminiKeyField, it)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        textStyle = TextStyle(color = Color.White, fontSize = 11.sp, fontFamily = FontFamily.Monospace),
+                        singleLine = true,
+                        placeholder = { Text("http://127.0.0.1:11434", color = Color.Gray, fontSize = 11.sp) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = activeColor,
+                            unfocusedBorderColor = CyberBorder,
+                            cursorColor = activeColor
+                        )
+                    )
+                }
+
+                Button(
+                    onClick = onPingCores,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = activeColor.copy(alpha = 0.15f)),
+                    border = BorderStroke(1.dp, activeColor),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text("PING ALL CORES", color = activeColor, fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                }
+
+                if (coreStatus != null) {
+                    Text(
+                        text = coreStatus,
+                        color = NeonGreen,
+                        fontSize = 8.sp,
+                        fontFamily = FontFamily.Monospace,
+                        lineHeight = 12.sp
+                    )
                 }
 
                 HorizontalDivider(color = CyberBorder.copy(alpha = 0.3f))

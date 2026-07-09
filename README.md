@@ -20,12 +20,24 @@ k3/
 | Tier | Core | When |
 |------|------|------|
 | 1 | **Ollama phi3 — local** | Default. Free, private, offline-capable. |
-| 2 | **Claude API** | Callback when phi3 can't do what's needed (vision, long input, daemon down, weak reply). |
-| 3 | **Gemini API** | Last-resort cloud callback. |
-| 4 | Rules core — local | Everything down; she still answers, nothing is lost. |
+| 2 | **Terminus `/api/brain`** | Her own server runs the whole chain with the keys in `server/.env` — works even when the APK was built with no keys. |
+| 3 | **Claude API — direct** | Callback when the tiers above can't do what's needed (vision, long input, daemon down, weak reply). |
+| 4 | **Gemini API — direct** | Last-resort cloud callback. |
+| 5 | Rules core — local | Everything down; she still answers, nothing is lost. |
 
 The phone app routes this chain in `android/.../data/KortanaBrain.kt`;
 Terminus mirrors it server-side in `server/brain.js` (`POST /api/brain`).
+
+**API keys without rebuilding:** open the app's **STATUS tab → Neural Core
+Access Keys**, paste a Claude (`sk-ant-...`) and/or Gemini key, and the cloud
+cores switch on immediately. **PING ALL CORES** on the same page shows exactly
+which tier is reachable. The Terminus tier instead uses the keys in
+`server/.env`, so on-phone (Termux) the easiest path is: put the keys in
+`~/k3/server/.env` once and every device she roams to gets them via Terminus.
+
+**PM2 separation:** Terminus runs in its own PM2 namespace (`kortana`), so
+`pm2 restart kortana` / `pm2 stop kortana` never touches other apps on the
+same machine (e.g. CampLoJack's EWS, namespace `camplojack-ews`).
 
 ## Terminus — her server, always on
 
