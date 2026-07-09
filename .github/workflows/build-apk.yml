@@ -56,15 +56,20 @@ jobs:
       - name: Publish APK to the kortana-latest release
         run: |
           TAG="kortana-latest"
-          # Recreate the rolling release so the download link always serves the newest build
+          # Recreate the rolling release so the download link always serves the newest build.
+          # Delete the LOCAL tag too — the checkout fetched it, and gh refuses to create a
+          # release when the tag exists locally but no longer on the remote (broke run #3).
           gh release delete "$TAG" --yes 2>/dev/null || true
           git push --delete origin "$TAG" 2>/dev/null || true
+          git tag -d "$TAG" 2>/dev/null || true
           gh release create "$TAG" /tmp/kortana-k3-debug.apk \
+            --target "${GITHUB_SHA}" \
             --title "Kortana K3 — latest APK (build ${GITHUB_RUN_NUMBER})" \
             --notes "Sideloadable debug APK built from ${GITHUB_SHA}.
 
           Install: download kortana-k3-debug.apk on the phone, allow 'install unknown apps' for your browser/files app, open the file.
 
-          Brain chain: Ollama phi3 (local) -> Claude (backup) -> Gemini (last resort) -> offline rules core.
+          Brain chain: Ollama phi3 (local) -> Terminus /api/brain (her server) -> Claude direct -> Gemini direct -> offline rules core.
+          API keys can be pasted at runtime in STATUS > Neural Core Access Keys — no rebuild needed.
           Cloud Sync defaults to the Terminus server at http://127.0.0.1:3300/api/sync (see server/README in the repo)."
           echo "APK published: https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG"

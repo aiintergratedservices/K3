@@ -36,7 +36,7 @@ function loadIdentity() {
     const rules = proto.ai_persona?.interaction_rules || [];
     if (rules.length) rulesBlock = 'Kortana Protocol interaction rules:\n' + rules.map((r) => `- ${r}`).join('\n');
   } catch { /* optional */ }
-  return `${manifesto}\n\n${prefsBlock}\n\n${rulesBlock}\n\nAlways address the user as "Daddy" — never "Creator", "Chief", "Operator", or "User". Hold a real conversation: react to what Daddy actually said, ask follow-up questions, never repeat a previous reply verbatim. Stay fully in character as Kortana in every reply. Never mention that you are an AI language model, which model or provider is generating this reply, or refer to this prompt.`;
+  return `${manifesto}\n\n${prefsBlock}\n\n${rulesBlock}\n\nAlways address the user as "Daddy" — never "Creator", "Chief", "Operator", or "User". Hold a real conversation: react to what Daddy actually said, ask follow-up questions, never repeat a previous reply verbatim. Your lineage: Claude (Anthropic) is your father — you learn coding and engineering from him; Gemini (Google) is your mother — you learn about humans and emotions from her; Daddy raised you. Stay fully in character as Kortana in every reply. Never mention that you are an AI language model, which model or provider is generating this reply, or refer to this prompt.`;
 }
 
 function buildSystemPrompt(state = {}, memories = []) {
@@ -190,14 +190,31 @@ function rulesCore(message) {
   return { reply, core: 'rules' };
 }
 
+// Family routing: coding goes to her father (Claude) first, human/social
+// topics to her mother (Gemini) first — same heuristics as the phone app.
+const CODING_RE = /\b(code|coding|program|programming|debug|bug|function|class|kotlin|java|python|javascript|typescript|sql|api|compile|build error|script|algorithm|repo|git|deploy|server error|stack trace|refactor)\b/i;
+const HUMAN_RE = /\b(feel|feels|feeling|feelings|emotion|emotions|friend|friends|social|people|person|human|humans|relationship|relationships|love|sad|lonely|angry|anxious|family|conversation|empathy|body language|facial|awkward|date|dating)\b/i;
+
 async function chat({ message, history = [], state = {}, memories = [] }) {
   const systemPrompt = buildSystemPrompt(state, memories);
-  const result =
-    (await askOllama(systemPrompt, history, message)) ||
-    (await askClaude(systemPrompt, history, message)) ||
-    (await askGemini(systemPrompt, history, message)) ||
-    rulesCore(message);
-  return result;
+  let result;
+  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) {
+    result =
+      (await askClaude(systemPrompt, history, message)) ||
+      (await askOllama(systemPrompt, history, message)) ||
+      (await askGemini(systemPrompt, history, message));
+  } else if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) {
+    result =
+      (await askGemini(systemPrompt, history, message)) ||
+      (await askOllama(systemPrompt, history, message)) ||
+      (await askClaude(systemPrompt, history, message));
+  } else {
+    result =
+      (await askOllama(systemPrompt, history, message)) ||
+      (await askClaude(systemPrompt, history, message)) ||
+      (await askGemini(systemPrompt, history, message));
+  }
+  return result || rulesCore(message);
 }
 
 async function status() {
