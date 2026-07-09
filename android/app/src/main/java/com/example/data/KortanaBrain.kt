@@ -82,8 +82,8 @@ object KortanaBrain {
             // humans, feelings and relationships go to her mother Gemini first.
             // Everything else stays local-first: phi3, then her Terminus server.
             else -> {
-                val looksLikeCoding = CODING_TOPICS.containsMatchIn(query)
-                val looksLikeHuman = HUMAN_TOPICS.containsMatchIn(query)
+                val looksLikeCoding = CODING_TOPICS.containsMatchIn(userMessage)
+                val looksLikeHuman = HUMAN_TOPICS.containsMatchIn(userMessage)
                 when {
                     looksLikeCoding && ClaudeService.isConfigured(currentState) -> {
                         Log.i(TAG, "Coding topic — asking her father (Claude) first.")
