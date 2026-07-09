@@ -473,7 +473,7 @@ class KortanaBubbleService : Service() {
             repository.chatMessagesFlow.collectLatest { messages ->
                 val formattedLog = StringBuilder()
                 messages.takeLast(30).forEach { msg ->
-                    val name = if (msg.sender == "USER") "Creator" else (activeState?.customName ?: "Kortana")
+                    val name = if (msg.sender == "USER") "Daddy" else (activeState?.customName ?: "Kortana")
                     val color = if (msg.sender == "USER") "#00E5FF" else "#FF007F"
                     formattedLog.append("<b><font color=\"$color\">$name</font></b>: ${msg.message}<br/><br/>")
                 }

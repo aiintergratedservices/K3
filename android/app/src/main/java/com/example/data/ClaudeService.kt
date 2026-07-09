@@ -31,10 +31,15 @@ object ClaudeService {
 
     private val mediaType = "application/json; charset=utf-8".toMediaType()
 
-    fun isConfigured(): Boolean {
-        val key = BuildConfig.ANTHROPIC_API_KEY
-        return key.isNotEmpty() && key != "MY_ANTHROPIC_API_KEY"
+    /** Key entered at runtime in Systems > Neural Core wins over the compile-time one. */
+    fun resolveKey(state: KortanaState?): String {
+        val runtimeKey = state?.anthropicApiKey?.trim().orEmpty()
+        if (runtimeKey.isNotEmpty()) return runtimeKey
+        val builtIn = BuildConfig.ANTHROPIC_API_KEY
+        return if (builtIn != "MY_ANTHROPIC_API_KEY") builtIn else ""
     }
+
+    fun isConfigured(state: KortanaState? = null): Boolean = resolveKey(state).isNotEmpty()
 
     suspend fun query(
         userMessage: String,
@@ -44,8 +49,9 @@ object ClaudeService {
         imageBase64: String? = null,
         mimeType: String = "image/jpeg"
     ): KortanaTurnResult? = withContext(Dispatchers.IO) {
-        if (!isConfigured()) {
-            Log.w(TAG, "ANTHROPIC_API_KEY missing or placeholder. Skipping Claude tier.")
+        val apiKey = resolveKey(currentState)
+        if (apiKey.isEmpty()) {
+            Log.w(TAG, "No Anthropic API key (runtime or compile-time). Skipping Claude tier.")
             return@withContext null
         }
 
@@ -111,7 +117,7 @@ object ClaudeService {
         val request = Request.Builder()
             .url(API_URL)
             .post(requestBodyJson.toString().toRequestBody(mediaType))
-            .addHeader("x-api-key", BuildConfig.ANTHROPIC_API_KEY)
+            .addHeader("x-api-key", apiKey)
             .addHeader("anthropic-version", ANTHROPIC_VERSION)
             .build()
 

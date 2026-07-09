@@ -49,6 +49,10 @@ class KortanaViewModel(application: Application) : AndroidViewModel(application)
     private val _generatedJsonPreview = MutableStateFlow("")
     val generatedJsonPreview: StateFlow<String> = _generatedJsonPreview.asStateFlow()
 
+    // Neural core connectivity readout (Systems > Neural Core "PING ALL CORES")
+    private val _coreStatus = MutableStateFlow<String?>(null)
+    val coreStatus: StateFlow<String?> = _coreStatus.asStateFlow()
+
     init {
         // Ensure state is created on first launch
         viewModelScope.launch {
@@ -138,6 +142,31 @@ class KortanaViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.updateDirectiveSettings(locked, custom)
             refreshJsonPreview()
+        }
+    }
+
+    fun updateBrainSettings(anthropicKey: String, geminiKey: String, ollamaUrl: String) {
+        viewModelScope.launch {
+            repository.updateBrainSettings(anthropicKey, geminiKey, ollamaUrl)
+        }
+    }
+
+    fun pingCores() {
+        viewModelScope.launch {
+            _coreStatus.value = "SCANNING NEURAL CORES..."
+            val s = state.value ?: repository.getOrCreateState()
+            val ollamaModel = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                OllamaService.detectInstalledModel(OllamaService.resolveBaseUrl(s))
+            }
+            val terminusUp = TerminusBrainService.ping(s)
+            val claudeReady = ClaudeService.isConfigured(s)
+            val geminiReady = GeminiService.isConfigured(s)
+            _coreStatus.value = listOf(
+                "OLLAMA LOCAL: " + (ollamaModel?.let { "ONLINE ($it)" } ?: "UNREACHABLE — run 'ollama serve' + 'ollama pull phi3.5' in Termux"),
+                "TERMINUS SERVER: " + (if (terminusUp) "ONLINE" else "UNREACHABLE — check Cloud Sync URL + API key below"),
+                "CLAUDE DIRECT: " + (if (claudeReady) "KEY SET" else "NO API KEY — paste one above"),
+                "GEMINI DIRECT: " + (if (geminiReady) "KEY SET" else "NO API KEY — paste one above")
+            ).joinToString("\n")
         }
     }
 

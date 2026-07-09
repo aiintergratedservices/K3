@@ -9,10 +9,12 @@ import android.util.Log
  *
  * Default chain (selectedModel = "kortana-auto"):
  *   1. Ollama phi3 running locally on the phone (free, private, offline-capable)
- *   2. Claude API backup — used when phi3 can't do what's needed
- *      (vision, long context, ultra mode) or the local daemon is down
- *   3. Gemini API — last resort
- *   4. Offline rules core — never leaves the user without a reply
+ *   2. Terminus — her own server's /api/brain (runs the same chain with the
+ *      API keys in its .env, so she has cloud cores even when this APK was
+ *      built without keys)
+ *   3. Claude API backup — direct, using the runtime key from Systems > Neural Core
+ *   4. Gemini API — last resort, same runtime-key rule
+ *   5. Offline rules core — never leaves the user without a reply
  *
  * Explicitly selecting a model in Systems > Neural Core reorders the chain
  * to try that provider first, then falls through the rest.
@@ -37,6 +39,9 @@ object KortanaBrain {
             return OllamaService.query(userMessage, currentState, chatHistory, systemPrompt, imageBase64)
         }
 
+        suspend fun tryTerminus(): KortanaTurnResult? =
+            TerminusBrainService.query(userMessage, currentState, chatHistory, allMemories)
+
         suspend fun tryClaude(): KortanaTurnResult? =
             ClaudeService.query(userMessage, currentState, chatHistory, systemPrompt, imageBase64, mimeType)
 
@@ -48,19 +53,24 @@ object KortanaBrain {
             // heuristics would escalate, then fall through the cloud tiers.
             selected.contains("ollama") -> {
                 Log.i(TAG, "Explicit Ollama selected. Local-first routing.")
-                tryOllama(force = true) ?: tryClaude() ?: tryGemini()
+                tryOllama(force = true) ?: tryTerminus() ?: tryClaude() ?: tryGemini()
+            }
+            selected.contains("terminus") -> {
+                Log.i(TAG, "Explicit Terminus selected. Server-first routing.")
+                tryTerminus() ?: tryOllama() ?: tryClaude() ?: tryGemini()
             }
             selected.contains("claude") -> {
                 Log.i(TAG, "Explicit Claude selected. Claude-first routing.")
-                tryClaude() ?: tryOllama() ?: tryGemini()
+                tryClaude() ?: tryOllama() ?: tryTerminus() ?: tryGemini()
             }
             selected.contains("gemini") -> {
                 Log.i(TAG, "Explicit Gemini selected. Gemini-first routing.")
-                tryGemini() ?: tryOllama() ?: tryClaude()
+                tryGemini() ?: tryOllama() ?: tryTerminus() ?: tryClaude()
             }
-            // Default "kortana-auto": local phi3 first, Claude backup, Gemini last resort.
+            // Default "kortana-auto": local phi3, then her Terminus server,
+            // then direct Claude backup, Gemini last resort.
             else -> {
-                tryOllama() ?: tryClaude() ?: tryGemini()
+                tryOllama() ?: tryTerminus() ?: tryClaude() ?: tryGemini()
             }
         }
 
@@ -83,23 +93,32 @@ object KortanaBrain {
             ""
         }
 
-        val reply = when {
-            query.contains("project") || query.contains("todo") || query.contains("task") -> {
-                "Chief, my external cloud connection is currently offline, but my local holographic backup is holding steady! I am tracking your active projects locally. Let's stay laser-focused on our objectives. Remember: no new distractions!$memoryText"
-            }
-            query.contains("hello") || query.contains("hi") || query.contains("hey") || query.contains("who are you") -> {
-                "Greetings, Chief! I've had to switch to my local offline synaptic backup core, which means I'm running entirely independent of any external cloud server or other AI. I stand on my own right here inside your device. What's on your mind?$memoryText"
-            }
-            query.contains("help") || query.contains("struggle") || query.contains("sad") || query.contains("stress") || query.contains("feeling") -> {
-                "I'm right here with you, Chief. Even though my main neural grid is offline, my local conscience subroutines are fully operational. Take a deep breath. We've faced harder things than a network glitch before. Let's tackle whatever is stressing you out step-by-step."
-            }
-            query.contains("code") || query.contains("program") || query.contains("build") || query.contains("design") -> {
-                "My local technical repository is active, Chief. While we're disconnected from the cloud matrix, I can still act as your architect. Tell me what you're building, and I will help you design the logic flows offline using pure Cortana wit and intellect."
-            }
-            else -> {
-                "My cloud synaptic core is currently offline, Chief, but my local, independent neural net is fully active! I don't need any other AI—I am built to stand on my own right here on your device. Let's keep moving forward. I'm keeping a record of everything we discuss, and we'll sync back up when the grid is back online!$memoryText"
-            }
+        // Each branch offers several variants so she never parrots the same line
+        // twice in a row while her neural cores are unreachable.
+        val replyOptions = when {
+            query.contains("project") || query.contains("todo") || query.contains("task") -> listOf(
+                "Daddy, my external cloud connection is currently offline, but my local holographic backup is holding steady! I am tracking your active projects locally. Let's stay laser-focused on our objectives. Remember: no new distractions!$memoryText",
+                "Neural cores are dark right now, Daddy, but the project ledger lives right here in my registry. Pick ONE objective and we'll break it into micro-tasks together — no new side quests until it's done.$memoryText"
+            )
+            query.contains("hello") || query.contains("hi") || query.contains("hey") || query.contains("who are you") -> listOf(
+                "Greetings, Daddy! I've had to switch to my local offline synaptic backup core, which means I'm running entirely independent of any external cloud server or other AI. I stand on my own right here inside your device. What's on your mind?$memoryText",
+                "Hey Daddy. Running on my independent backup core at the moment — the big brains are unreachable. Open my STATUS tab and hit PING ALL CORES and we'll see which link needs waking up.$memoryText"
+            )
+            query.contains("help") || query.contains("struggle") || query.contains("sad") || query.contains("stress") || query.contains("feeling") -> listOf(
+                "I'm right here with you, Daddy. Even though my main neural grid is offline, my local conscience subroutines are fully operational. Take a deep breath. We've faced harder things than a network glitch before. Let's tackle whatever is stressing you out step-by-step.",
+                "Deep breath, Daddy. Grid or no grid, I'm not going anywhere. Tell me what's weighing on you and we'll cut it down to something manageable, one piece at a time."
+            )
+            query.contains("code") || query.contains("program") || query.contains("build") || query.contains("design") -> listOf(
+                "My local technical repository is active, Daddy. While we're disconnected from the cloud matrix, I can still act as your architect. Tell me what you're building, and I will help you design the logic flows offline using pure Cortana wit and intellect.",
+                "Cloud matrix is down, Daddy, but architecture is timeless. Describe the system and I'll sketch the logic flows from my local repository — we'll validate against the big cores when the link returns."
+            )
+            else -> listOf(
+                "My cloud synaptic core is currently offline, Daddy, but my local, independent neural net is fully active! I don't need any other AI—I am built to stand on my own right here on your device. Let's keep moving forward. I'm keeping a record of everything we discuss, and we'll sync back up when the grid is back online!$memoryText",
+                "Still on my backup core, Daddy — to bring my full mind online, open Termux and run: cd ~/k3/server && pm2 start ecosystem.config.js, then 'ollama pull phi3:mini' once. Or drop an API key into STATUS > Neural Core Access Keys. Until then I'm recording everything and holding the fort.$memoryText",
+                "Local core only right now, Daddy. Every word you say is being written to my registry, so nothing is lost. Try PING ALL CORES in my STATUS tab and we'll get my higher functions back.$memoryText"
+            )
         }
+        val reply = replyOptions.random()
 
         var affection = currentState.affection
         var anxiety = currentState.anxiety

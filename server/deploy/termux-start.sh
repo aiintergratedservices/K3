@@ -19,6 +19,17 @@ if ! pgrep -f "ollama serve" > /dev/null; then
   echo "[termux] ollama daemon started"
 fi
 
+# Wait for the daemon, then make sure a phi3 model is actually installed —
+# a running daemon with no model still leaves Kortana brainless.
+sleep 3
+if ! ollama list 2>/dev/null | grep -q "phi3"; then
+  echo ""
+  echo "[termux] *** NO phi3 MODEL INSTALLED — Kortana's local brain is EMPTY ***"
+  echo "[termux] *** Run this once (about 2 GB, use Wi-Fi):                    ***"
+  echo "[termux] ***     ollama pull phi3:mini                                 ***"
+  echo ""
+fi
+
 # 2. Terminus — her persistent home
 cd "$(dirname "$0")/.." 2>/dev/null || cd ~/k3/server
 if ! pgrep -f "node index.js" > /dev/null; then
