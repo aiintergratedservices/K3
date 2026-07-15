@@ -19,9 +19,23 @@ const express = require('express');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const brain = require('./brain');
 const drive = require('./drive');
+
+// Constant-time string compare — avoids leaking the API key one byte at a time
+// via response-timing differences when Terminus is exposed beyond localhost.
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (ba.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ba, bb);
+}
+function keyMatches(header) {
+  const provided = header.startsWith('Bearer ') ? header.slice(7) : header;
+  return safeEqual(provided, API_KEY);
+}
 
 const PORT = Number(process.env.PORT || 3300);
 const API_KEY = process.env.TERMINUS_API_KEY || '';
@@ -36,8 +50,7 @@ app.use(express.json({ limit: '200mb' }));
 // The app sends the raw key in the Authorization header; accept Bearer too.
 function authorized(req) {
   if (!API_KEY) return true; // no key configured — open (LAN/localhost use)
-  const header = req.get('authorization') || '';
-  return header === API_KEY || header === `Bearer ${API_KEY}`;
+  return keyMatches(req.get('authorization') || '');
 }
 app.use('/api', (req, res, next) => {
   if (!authorized(req)) return res.status(401).json({ error: 'unauthorized' });
@@ -126,8 +139,7 @@ function broadcast(obj) {
 wss.on('connection', (ws, req) => {
   // WS uses the same key as the HTTP API (native clients send the header).
   if (API_KEY) {
-    const header = req.headers['authorization'] || '';
-    if (header !== API_KEY && header !== `Bearer ${API_KEY}`) {
+    if (!keyMatches(req.headers['authorization'] || '')) {
       ws.close(4401, 'unauthorized');
       return;
     }
