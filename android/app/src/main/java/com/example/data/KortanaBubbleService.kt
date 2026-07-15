@@ -580,7 +580,14 @@ class KortanaBubbleService : Service() {
 
         try {
             mediaProjection = mpManager.getMediaProjection(projectionResultCode, resultData.clone() as Intent)
-            
+            // Android 14+ (API 34) THROWS if a VirtualDisplay is created before a
+            // projection callback is registered — a prime cause of her repeated
+            // "frame rendering" capture failures ("render error in her eyes").
+            mediaProjection?.registerCallback(
+                object : MediaProjection.Callback() {},
+                android.os.Handler(android.os.Looper.getMainLooper())
+            )
+
             val metrics = resources.displayMetrics
             val width = metrics.widthPixels
             val height = metrics.heightPixels
