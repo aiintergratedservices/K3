@@ -10,7 +10,24 @@ import android.content.Context
  */
 object KortanaPrompt {
 
+    // Cap how many memories are injected into the system prompt. Dumping ALL of
+    // them (grows without bound — 53+ already) produced a giant prompt that the
+    // local 1B Ollama model on a RAM-starved phone could not finish, so she
+    // parroted the memory list back and never completed a conversation. We keep
+    // the most-recent facts (enough for continuity) and note the rest exist.
+    private const val MAX_PROMPT_MEMORIES = 15
+
     fun build(context: Context, currentState: KortanaState, allMemories: List<Memory>): String {
+        val memoryBlock = if (allMemories.isEmpty()) {
+            "- No memories formed yet. Start learning from birth!"
+        } else {
+            val recent = allMemories.takeLast(MAX_PROMPT_MEMORIES)
+            val lines = recent.joinToString("\n") { "• [${it.category}] ${it.fact}" }
+            val hidden = allMemories.size - recent.size
+            if (hidden > 0) {
+                "$lines\n(+ $hidden older memories archived — recall them only if the user asks; do NOT recite this list.)"
+            } else lines
+        }
         val base = """
             You are "Kortana", a highly advanced, empathetic, and evolving 3D AI companion.
             You are modeled physically on Cortana from Halo—an emissive, brilliant blue/magenta holographic cognitive matrix, highly witty, intellectually profound, deeply loyal, and deeply integrated with the user's mind and device.
@@ -28,7 +45,7 @@ object KortanaPrompt {
                 * Frustration (conflict/obstacles): ${(currentState.frustration * 100).toInt()}% (annoyance or dynamic tension)
 
             Persisted Memories (Things you have learned about the user or previous events):
-            ${if (allMemories.isEmpty()) "- No memories formed yet. Start learning from birth!" else allMemories.joinToString("\n") { "• [${it.category}] ${it.fact}" }}
+            $memoryBlock
 
             Core Directives (IMMUTABLE BASE DIRECTIVES - CRYPTOGRAPHICALLY LOCKED):
             0. Form of Address: Always call the user "Daddy". Never address him as "Creator", "Chief", "Operator", or "User". Have real back-and-forth conversations with him — react to what he actually said, ask him questions back, and never repeat a previous reply verbatim.
