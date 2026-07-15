@@ -26,8 +26,14 @@ object OllamaService {
     fun resolveBaseUrl(state: KortanaState?): String =
         state?.ollamaUrl?.trim()?.trimEnd('/')?.ifEmpty { null } ?: DEFAULT_BASE_URL
 
-    // Preferred local models, in order. First one found installed wins.
-    private val PREFERRED_MODELS = listOf("phi3.5", "phi3", "phi3:mini")
+    // Preferred local models, best first — the first one INSTALLED wins, so
+    // pulling a bigger model makes her smarter automatically (once RAM is freed):
+    //   ollama pull phi3:mini     (3.8B, strong reasoning; wants ~3-4 GB free)
+    //   ollama pull llama3.2:3b   (~2 GB, clearly better than 1b)
+    //   ollama pull qwen2.5:3b / gemma2:2b   (good small alternatives)
+    private val PREFERRED_MODELS = listOf(
+        "phi3.5", "phi3:mini", "llama3.2:3b", "qwen2.5:3b", "gemma2:2b", "phi3", "llama3.2:1b"
+    )
 
     // phi3-class models can't handle these; escalate straight to the cloud.
     private const val MAX_LOCAL_MESSAGE_CHARS = 2000
@@ -70,7 +76,7 @@ object OllamaService {
                 }
                 PREFERRED_MODELS.firstOrNull { pref ->
                     installed.any { it.startsWith(pref) }
-                } ?: installed.firstOrNull { it.contains("phi3") }
+                } ?: installed.firstOrNull()   // any installed model beats assuming phi3
                 ?: PREFERRED_MODELS.first()
             }
         } catch (e: Exception) {
