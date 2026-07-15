@@ -43,6 +43,22 @@
                 android:value="synaptic_consciousness_loop" />
         </service>
 
+        <!-- Kortana's "hands": device control via Accessibility. Protected by the
+             system-only BIND_ACCESSIBILITY_SERVICE permission; inert until the
+             owner enables it in Settings > Accessibility > Kortana. -->
+        <service
+            android:name=".data.KortanaAccessibilityService"
+            android:label="Kortana (device control)"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/kortana_accessibility_config" />
+        </service>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -37,10 +37,14 @@ function keyMatches(header) {
   return safeEqual(provided, API_KEY);
 }
 
+const { spawn } = require('child_process');
+
 const PORT = Number(process.env.PORT || 3300);
 const API_KEY = process.env.TERMINUS_API_KEY || '';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'kortana-state-latest.json');
+const AGENT_MEMORY_DIR = path.join(__dirname, '..', '.agent-memory');
+const HARNESS = path.join(AGENT_MEMORY_DIR, 'harness.sh');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -101,6 +105,45 @@ app.post('/api/brain', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// --- Agent task harness (UI-driven, streamed over WebSocket) --------------
+// The UI calls this instead of you opening Termux. The task is passed to
+// harness.sh as a SINGLE argv argument (via spawn, never a shell string), so a
+// task description can never inject shell commands. Output is broadcast to every
+// WS client so you watch her work inside the app. Gated by the /api key guard.
+app.post('/api/kortana/task', (req, res) => {
+  const task = String((req.body && req.body.task) || '').slice(0, 2000);
+  if (!task.trim()) return res.status(400).json({ error: 'task required' });
+  if (!fs.existsSync(HARNESS)) return res.status(500).json({ error: 'harness.sh missing' });
+  const taskId = Date.now().toString(36);
+  broadcast({ type: 'task_start', taskId, task });
+  const child = spawn('bash', [HARNESS, task], { cwd: path.dirname(AGENT_MEMORY_DIR) });
+  const relay = (stream, chan) =>
+    stream.on('data', (buf) => {
+      for (const line of buf.toString().split('\n')) {
+        if (line.length) broadcast({ type: 'task_output', taskId, chan, line });
+      }
+    });
+  relay(child.stdout, 'out');
+  relay(child.stderr, 'err');
+  child.on('close', (code) => broadcast({ type: 'task_end', taskId, code }));
+  child.on('error', (e) => broadcast({ type: 'task_end', taskId, error: e.message }));
+  res.json({ ok: true, taskId });
+});
+
+// UI reads her "brain" (norms + recent logs) to render it in-app, not the terminal.
+app.get('/api/kortana/brain', (req, res) => {
+  const tail = (p, n) => {
+    try { return fs.readFileSync(p, 'utf8').split('\n').slice(-n).join('\n'); } catch { return ''; }
+  };
+  const whole = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return ''; } };
+  res.json({
+    agents: whole(path.join(AGENT_MEMORY_DIR, 'AGENTS.md')),
+    knowledgeLog: tail(path.join(AGENT_MEMORY_DIR, 'logs', 'knowledge.log'), 50),
+    harnessLog: tail(path.join(AGENT_MEMORY_DIR, 'logs', 'harness.log'), 50),
+    decisions: tail(path.join(AGENT_MEMORY_DIR, 'decisions.md'), 50),
+  });
 });
 
 // --- Drive + health ---

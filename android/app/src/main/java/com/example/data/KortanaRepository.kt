@@ -95,6 +95,13 @@ class KortanaRepository(context: Context) {
             dao.insertScript(mut.copy(purpose = finalPurpose))
         }
 
+        // Execute a device action if her brain requested one AND the owner has
+        // enabled her accessibility "hands" (Settings > Accessibility > Kortana).
+        // Safely no-ops when the service is disabled — she simply cannot act.
+        result.deviceAction?.let { action ->
+            KortanaAccessibilityService.instance?.execute(action)
+        }
+
         val updatedState = currentState.copy(
             level = newLevel,
             experience = newXp,

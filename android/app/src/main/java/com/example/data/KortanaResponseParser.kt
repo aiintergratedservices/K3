@@ -12,7 +12,8 @@ data class KortanaTurnResult(
     val anxiety: Float = 0.1f,
     val excitement: Float = 0.5f,
     val frustration: Float = 0.0f,
-    val dynamicMutation: SynapticScript? = null
+    val dynamicMutation: SynapticScript? = null,
+    val deviceAction: DeviceAction? = null
 )
 
 /**
@@ -68,6 +69,18 @@ object KortanaResponseParser {
                 )
             } else null
 
+            val actionObj = parsedResult.optJSONObject("deviceAction")
+            val deviceAction = if (actionObj != null) {
+                DeviceAction(
+                    type = actionObj.optString("type", ""),
+                    x = actionObj.optInt("x", 0),
+                    y = actionObj.optInt("y", 0),
+                    x2 = actionObj.optInt("x2", 0),
+                    y2 = actionObj.optInt("y2", 0),
+                    text = actionObj.optString("text", "")
+                ).takeIf { it.type.isNotBlank() }
+            } else null
+
             KortanaTurnResult(
                 reply = reply,
                 learnedFacts = learnedFacts,
@@ -77,7 +90,8 @@ object KortanaResponseParser {
                 anxiety = parsedAnxiety,
                 excitement = parsedExcitement,
                 frustration = parsedFrustration,
-                dynamicMutation = dynamicMutation
+                dynamicMutation = dynamicMutation,
+                deviceAction = deviceAction
             )
         } catch (pe: Exception) {
             Log.e(TAG, "Error parsing Kortana JSON reply, using raw text: $cleaned", pe)

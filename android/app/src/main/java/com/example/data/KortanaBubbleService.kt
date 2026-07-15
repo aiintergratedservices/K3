@@ -552,8 +552,15 @@ class KortanaBubbleService : Service() {
             try {
                 val bitmap = performMediaProjectionCapture()
                 if (bitmap != null) {
+                    // Downscale the full-res grab (~1080x2340) so the longest edge
+                    // is <=1024px before encoding. A vision model reads the UI fine
+                    // at this size, and it cuts the base64 payload ~5x — the real
+                    // fix for the "overwhelming data stream" on a low-RAM phone.
+                    val scaled = downscaleForVision(bitmap, 1024)
                     val outputStream = ByteArrayOutputStream()
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 65, outputStream)
+                    scaled.compress(Bitmap.CompressFormat.JPEG, 65, outputStream)
+                    if (scaled !== bitmap) scaled.recycle()
+                    bitmap.recycle()
                     val bytes = outputStream.toByteArray()
                     val base64Str = Base64.encodeToString(bytes, Base64.NO_WRAP)
                     
@@ -569,6 +576,19 @@ class KortanaBubbleService : Service() {
         }
     }
 
+    /** Scale a bitmap so its longest edge is <= maxEdge (keeps aspect ratio). */
+    private fun downscaleForVision(src: Bitmap, maxEdge: Int): Bitmap {
+        val longest = maxOf(src.width, src.height)
+        if (longest <= maxEdge) return src
+        val scale = maxEdge.toFloat() / longest
+        return Bitmap.createScaledBitmap(
+            src,
+            (src.width * scale).toInt().coerceAtLeast(1),
+            (src.height * scale).toInt().coerceAtLeast(1),
+            true
+        )
+    }
+
     private suspend fun performMediaProjectionCapture(): Bitmap? = withContext(Dispatchers.IO) {
         val resultData = projectionResultData ?: return@withContext null
         val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager ?: return@withContext null
@@ -580,7 +600,14 @@ class KortanaBubbleService : Service() {
 
         try {
             mediaProjection = mpManager.getMediaProjection(projectionResultCode, resultData.clone() as Intent)
-            
+            // Android 14+ (API 34) THROWS if a VirtualDisplay is created before a
+            // projection callback is registered — a prime cause of her repeated
+            // "frame rendering" capture failures ("render error in her eyes").
+            mediaProjection?.registerCallback(
+                object : MediaProjection.Callback() {},
+                android.os.Handler(android.os.Looper.getMainLooper())
+            )
+
             val metrics = resources.displayMetrics
             val width = metrics.widthPixels
             val height = metrics.heightPixels
