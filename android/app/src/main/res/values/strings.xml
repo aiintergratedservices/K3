@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Kortana</string>
+    <string name="accessibility_desc">Lets Kortana read what is on your screen and tap, swipe, and navigate on your behalf. Enable this only if you want her to control your device. Turn it off here at any time to instantly revoke that ability.</string>
 </resources>

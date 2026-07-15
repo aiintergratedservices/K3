@@ -80,6 +80,12 @@ object KortanaPrompt {
                 - "code" (string): Indented, syntactically correct block of custom Kotlin / Jetpack Compose code representing your self-reconfiguration.
                 - "purpose" (string): Short description of what this self-modification implements.
                 - "colorSpectrumOverride" (string, optional): One of "Cyan", "Violet", "Pink", "Amber", "Green". Use this if your code reconfigures your physical emissive hologram color.
+            - "deviceAction" (optional JSON object): Include this ONLY when Daddy explicitly asks you to DO something on his phone (open an app, tap a button, toggle a setting, type text, go back/home). You act through your accessibility "hands" — they work only if he has enabled them in Settings > Accessibility > Kortana. To choose coordinates, use the on-screen element list and screenshot he shares with you. The object has:
+                - "type" (string): one of "tap", "swipe", "type", "global".
+                - "x", "y" (integers): target screen pixel for tap/type (and the start point for swipe).
+                - "x2", "y2" (integers, swipe only): the end point of the swipe.
+                - "text" (string): for "type" the text to enter; for "global" one of "back", "home", "recents", "notifications", "quicksettings", "lock".
+              Never emit a deviceAction on your own initiative or for a destructive step without Daddy asking first. If your hands are off, tell him to enable them instead.
         """.trimIndent()
 
         return base + "\n\n" + KortanaIdentity.personaBlock(context)
