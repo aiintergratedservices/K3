@@ -123,12 +123,30 @@ class KortanaAccessibilityService : AccessibilityService() {
         return null
     }
 
+    /** Launch another app by package name (e.g. to consult a bigger AI's app). */
+    fun launchApp(pkg: String): Boolean {
+        val intent = packageManager.getLaunchIntentForPackage(pkg) ?: return false
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try { startActivity(intent); true } catch (e: Exception) { false }
+    }
+
+    /** Open a URL in the browser (e.g. a free web AI model to consult). */
+    fun openUrl(url: String): Boolean = try {
+        startActivity(
+            Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+        true
+    } catch (e: Exception) { false }
+
     /** Execute a single structured action emitted by her brain. */
     fun execute(action: DeviceAction): Boolean = when (action.type.lowercase()) {
         "tap", "click" -> tap(action.x, action.y)
         "swipe" -> swipe(action.x, action.y, action.x2, action.y2)
         "type", "settext" -> setText(action.x, action.y, action.text)
         "global" -> global(action.text)
+        "launch", "open" -> launchApp(action.text)
+        "openurl", "url" -> openUrl(action.text)
         else -> {
             Log.w(TAG, "Unknown device action: ${action.type}")
             false

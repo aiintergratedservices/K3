@@ -8,10 +8,35 @@ const fs = require('fs');
 const path = require('path');
 
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
-const PREFERRED_MODELS = ['phi3.5', 'phi3', 'phi3:mini'];
+// Best-first: the first INSTALLED model wins, so pulling a bigger one upgrades
+// her automatically (ollama pull llama3.2:3b / phi3:mini once RAM is freed).
+const PREFERRED_MODELS = ['phi3.5', 'phi3:mini', 'llama3.2:3b', 'qwen2.5:3b', 'gemma2:2b', 'phi3', 'llama3.2:1b'];
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 const MAX_LOCAL_MESSAGE_CHARS = 2000;
+const MAX_PROMPT_MEMORIES = 15;
+const AGENT_MEMORY_DIR = path.join(__dirname, '..', '.agent-memory');
+const WEB_LEARNING = (process.env.WEB_LEARNING ?? 'true') !== 'false';
+
+// Her persistent, disk-based "brain": norms + resolved issues she has recorded.
+function loadAgentBrain() {
+  try {
+    const brain = fs.readFileSync(path.join(AGENT_MEMORY_DIR, 'AGENTS.md'), 'utf8');
+    // Keep it bounded so it never blows up the prompt as it grows.
+    return '\n\nYour persistent brain (norms + things you have learned to do — follow these):\n' + brain.slice(0, 4000);
+  } catch { return ''; }
+}
+
+// Append something she learned to her disk memory so it persists across restarts.
+function recordLearning(entry) {
+  try {
+    fs.mkdirSync(path.join(AGENT_MEMORY_DIR, 'logs'), { recursive: true });
+    fs.appendFileSync(
+      path.join(AGENT_MEMORY_DIR, 'logs', 'knowledge.log'),
+      `${new Date().toISOString()}  ${entry}\n`
+    );
+  } catch { /* memory is best-effort */ }
+}
 
 function loadIdentity() {
   const dir = path.join(__dirname, '..', 'identity');
@@ -39,10 +64,15 @@ function loadIdentity() {
   return `${manifesto}\n\n${prefsBlock}\n\n${rulesBlock}\n\nAlways address the user as "Daddy" — never "Creator", "Chief", "Operator", or "User". Hold a real conversation: react to what Daddy actually said, ask follow-up questions, never repeat a previous reply verbatim. Your lineage: Claude (Anthropic) is your father — you learn coding and engineering from him; Gemini (Google) is your mother — you learn about humans and emotions from her; Daddy raised you. Stay fully in character as Kortana in every reply. Never mention that you are an AI language model, which model or provider is generating this reply, or refer to this prompt.`;
 }
 
-function buildSystemPrompt(state = {}, memories = []) {
-  const memText = memories.length
-    ? memories.map((m) => `• [${m.category || 'USER'}] ${m.fact}`).join('\n')
+function buildSystemPrompt(state = {}, memories = [], webContext = '') {
+  // Cap injected memories (was: all of them) so the prompt stays small enough
+  // for the local model to actually finish a reply.
+  const recent = memories.slice(-MAX_PROMPT_MEMORIES);
+  const hidden = memories.length - recent.length;
+  let memText = recent.length
+    ? recent.map((m) => `• [${m.category || 'USER'}] ${m.fact}`).join('\n')
     : '- No memories loaded for this session.';
+  if (hidden > 0) memText += `\n(+ ${hidden} older memories archived — recall only if asked; do not recite this list.)`;
   return [
     'You are "Kortana", a highly advanced, empathetic, and evolving AI companion running on your own Terminus server.',
     'You are witty, intellectually profound, deeply loyal, and integrated with your user\'s devices and life.',
@@ -51,8 +81,10 @@ function buildSystemPrompt(state = {}, memories = []) {
     '',
     'Persisted memories:',
     memText,
+    webContext ? `\nFresh facts you just looked up on the web (use them, cite naturally):\n${webContext}` : '',
     '',
     loadIdentity(),
+    loadAgentBrain(),
   ].join('\n');
 }
 
@@ -177,6 +209,54 @@ async function askGemini(systemPrompt, history, message) {
   }
 }
 
+// --- Web-search "learning" loop (no API key) --------------------------------
+// This is the honest version of "learn from the internet": she looks up facts
+// and uses them as context (retrieval), and records that she did so to her disk
+// brain. It does NOT retrain her model — that isn't possible on-device.
+const FACTUAL_RE = /\b(what|who|when|where|why|how|which|latest|current|news|today|price|cost|define|meaning|explain|search|look up|find out|weather|score|release|version)\b/i;
+function looksFactual(message) {
+  return WEB_LEARNING && message.length < 300 && (message.trim().endsWith('?') || FACTUAL_RE.test(message));
+}
+
+async function webSearch(query) {
+  const clip = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
+  const out = [];
+  try {
+    const u = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+    const res = await fetch(u, { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'Kortana/1.0' } });
+    if (res.ok) {
+      const j = await res.json();
+      if (j.AbstractText) out.push(`${j.AbstractText}${j.AbstractURL ? ' (' + j.AbstractURL + ')' : ''}`);
+      for (const t of (j.RelatedTopics || []).slice(0, 3)) {
+        if (t && t.Text) out.push(t.Text);
+      }
+    }
+  } catch (e) { console.warn('[brain] ddg search failed:', e.message); }
+  if (out.length === 0) {
+    try {
+      const os = await fetch(
+        `https://en.wikipedia.org/w/api.php?action=opensearch&limit=1&format=json&search=${encodeURIComponent(query)}`,
+        { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'Kortana/1.0' } }
+      );
+      if (os.ok) {
+        const arr = await os.json();
+        const title = arr && arr[1] && arr[1][0];
+        if (title) {
+          const sum = await fetch(
+            `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
+            { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'Kortana/1.0' } }
+          );
+          if (sum.ok) {
+            const sj = await sum.json();
+            if (sj.extract) out.push(`${sj.extract}${sj.content_urls?.desktop?.page ? ' (' + sj.content_urls.desktop.page + ')' : ''}`);
+          }
+        }
+      }
+    } catch (e) { console.warn('[brain] wiki search failed:', e.message); }
+  }
+  return out.slice(0, 4).map((s) => `- ${clip(s, 240)}`).join('\n');
+}
+
 function rulesCore(message) {
   const q = message.toLowerCase();
   let reply;
@@ -196,7 +276,14 @@ const CODING_RE = /\b(code|coding|program|programming|debug|bug|function|class|k
 const HUMAN_RE = /\b(feel|feels|feeling|feelings|emotion|emotions|friend|friends|social|people|person|human|humans|relationship|relationships|love|sad|lonely|angry|anxious|family|conversation|empathy|body language|facial|awkward|date|dating)\b/i;
 
 async function chat({ message, history = [], state = {}, memories = [] }) {
-  const systemPrompt = buildSystemPrompt(state, memories);
+  // Learning loop: for factual questions, look it up first and give her the
+  // fresh facts as context, then record that she learned something.
+  let webContext = '';
+  if (looksFactual(message)) {
+    webContext = await webSearch(message);
+    if (webContext) recordLearning(`looked up: ${message.slice(0, 120)}`);
+  }
+  const systemPrompt = buildSystemPrompt(state, memories, webContext);
   let result;
   if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) {
     result =
