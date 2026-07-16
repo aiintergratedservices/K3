@@ -132,6 +132,21 @@ const ok = (m) => { console.log('  ✓', m); n++; };
   assert(!capped.reply.includes('TOOL_CALL'));
   ok('agentic loop is capped and never loops forever');
 
+  // --- cloud-GPU core (OpenAI-compatible) ---
+  process.env.GPU_API_KEY = 'test-key';
+  const origFetch = global.fetch;
+  let captured = null;
+  global.fetch = async (url, opts) => { captured = { url, opts }; return { ok: true, json: async () => ({ choices: [{ message: { content: 'GPU reply' } }] }), text: async () => '' }; };
+  const gpu = await brain.askCloudGpu('sys', [{ sender: 'USER', message: 'hi' }], 'you up?');
+  global.fetch = origFetch;
+  assert(captured.url.endsWith('/chat/completions'), 'hits OpenAI-compatible endpoint');
+  assert.strictEqual(captured.opts.headers.authorization, 'Bearer test-key');
+  assert(gpu.reply === 'GPU reply' && gpu.core.startsWith('gpu:'), 'parses OpenAI response');
+  assert.strictEqual(brain.providerChain('just chatting')[0].name, 'askCloudGpu', 'GPU leads general chat when configured');
+  delete process.env.GPU_API_KEY;
+  assert.strictEqual(await brain.askCloudGpu('s', [], 'x'), null, 'GPU core is off without a key');
+  ok('cloud-GPU core: OpenAI-compatible call, leads chain when keyed, off without key');
+
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log(`\nAll ${n} tool checks passed.`);
 })().catch((e) => { console.error('FAILED:', e); process.exitCode = 1; });

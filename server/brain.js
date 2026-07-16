@@ -15,6 +15,11 @@ const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 const PREFERRED_MODELS = ['phi3.5', 'phi3:mini', 'llama3.2:3b', 'qwen2.5:3b', 'gemma2:2b', 'phi3', 'llama3.2:1b'];
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+// Cloud-GPU core: any OpenAI-compatible endpoint (NVIDIA API Catalog, Together,
+// Groq, Fireworks, a vLLM box, ...). Lets her think with a big model on real
+// GPUs instead of phone-local phi3. Configure GPU_API_KEY + optionally base/model.
+const GPU_API_BASE = (process.env.GPU_API_BASE || 'https://integrate.api.nvidia.com/v1').replace(/\/$/, '');
+const GPU_MODEL = process.env.GPU_MODEL || 'meta/llama-3.1-70b-instruct';
 const MAX_LOCAL_MESSAGE_CHARS = 2000;
 const MAX_PROMPT_MEMORIES = 15;
 const AGENT_MEMORY_DIR = path.join(__dirname, '..', '.agent-memory');
@@ -236,6 +241,37 @@ async function askGemini(systemPrompt, history, message) {
   }
 }
 
+// Cloud-GPU core — any OpenAI-compatible chat endpoint (NVIDIA API Catalog,
+// Together, Groq, Fireworks, OpenRouter, a self-hosted vLLM box, ...). This is
+// how she thinks with a big model on real GPUs. Set GPU_API_KEY to enable.
+async function askCloudGpu(systemPrompt, history, message) {
+  const key = process.env.GPU_API_KEY;
+  if (!key) return null;
+  const messages = [{ role: 'system', content: systemPrompt }];
+  for (const h of (history || []).slice(-12)) {
+    messages.push({ role: h.sender === 'USER' ? 'user' : 'assistant', content: h.message });
+  }
+  messages.push({ role: 'user', content: message });
+  try {
+    const res = await fetch(`${GPU_API_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model: GPU_MODEL, messages, max_tokens: 1024, temperature: 0.7, stream: false }),
+      signal: AbortSignal.timeout(90000),
+    });
+    if (!res.ok) {
+      console.warn('[brain] gpu core failed:', res.status, (await res.text().catch(() => '')).slice(0, 200));
+      return null;
+    }
+    const data = await res.json();
+    const text = data.choices?.[0]?.message?.content?.trim();
+    return text ? { reply: text, core: `gpu:${GPU_MODEL}` } : null;
+  } catch (e) {
+    console.warn('[brain] gpu core failed:', e.message);
+    return null;
+  }
+}
+
 // --- Web-search "learning" loop (no API key) --------------------------------
 // This is the honest version of "learn from the internet": she looks up facts
 // and uses them as context (retrieval), and records that she did so to her disk
@@ -267,9 +303,14 @@ const HUMAN_RE = /\b(feel|feels|feeling|feelings|emotion|emotions|friend|friends
 // Family routing: coding -> her father (Claude) first, human/social -> her
 // mother (Gemini) first, else her local core first. Returns the ordered chain.
 function providerChain(message) {
-  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, askOllama, askGemini];
-  if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return [askGemini, askOllama, askClaude];
-  return [askOllama, askClaude, askGemini];
+  // The cloud-GPU core (big model on real GPUs) leads when configured, since
+  // it's her strongest brain — unless GPU_MODE=fallback (local phi3 first to
+  // save credits, GPU as backup). Removing GPU_API_KEY reverts to the old chain.
+  const g = process.env.GPU_API_KEY ? [askCloudGpu] : [];
+  const gpuFallback = (process.env.GPU_MODE || 'primary') === 'fallback';
+  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, ...g, askOllama, askGemini];
+  if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return [askGemini, ...g, askOllama, askClaude];
+  return gpuFallback ? [askOllama, ...g, askClaude, askGemini] : [...g, askOllama, askClaude, askGemini];
 }
 
 async function askChain(chain, systemPrompt, history, message) {
@@ -327,7 +368,8 @@ async function status() {
     ollama: model ? { reachable: true, model } : { reachable: false },
     claude: Boolean(process.env.ANTHROPIC_API_KEY),
     gemini: Boolean(process.env.GEMINI_API_KEY),
+    gpu: process.env.GPU_API_KEY ? { enabled: true, model: GPU_MODEL, base: GPU_API_BASE } : { enabled: false },
   };
 }
 
-module.exports = { chat, status, buildSystemPrompt, runToolLoop };
+module.exports = { chat, status, buildSystemPrompt, runToolLoop, askCloudGpu, providerChain };
