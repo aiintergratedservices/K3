@@ -12,7 +12,7 @@ const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 // her automatically (ollama pull llama3.2:3b / phi3:mini once RAM is freed).
 const PREFERRED_MODELS = ['phi3.5', 'phi3:mini', 'llama3.2:3b', 'qwen2.5:3b', 'gemma2:2b', 'phi3', 'llama3.2:1b'];
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5';
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const MAX_LOCAL_MESSAGE_CHARS = 2000;
 const MAX_PROMPT_MEMORIES = 15;
 const AGENT_MEMORY_DIR = path.join(__dirname, '..', '.agent-memory');
@@ -79,29 +79,41 @@ function buildSystemPrompt(state = {}, memories = [], webContext = '') {
     '',
     `Current state: level ${state.level ?? 1}, mood ${state.mood ?? 'CURIOUS'}, energy ${state.energy ?? 100}%.`,
     '',
-    'Persisted memories:',
+    'Persisted memories (PRIVATE context — use them to inform your reply, but never list, enumerate, dump, or recite them back unless Daddy explicitly asks "what do you remember"):',
     memText,
     webContext ? `\nFresh facts you just looked up on the web (use them, cite naturally):\n${webContext}` : '',
+    '',
+    'Respond to what Daddy actually just said. Do not open by reciting your memories, your state, or your capabilities — just talk to him.',
     '',
     loadIdentity(),
     loadAgentBrain(),
   ].join('\n');
 }
 
-async function detectOllamaModel() {
+// Ordered list of installed models to try: preferred (often larger/better)
+// first, but EVERY installed model is kept as a fallback so one that OOMs on a
+// small device degrades to a smaller one instead of dropping her offline.
+async function listOllamaModels() {
   try {
     const res = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(4000) });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const installed = (data.models || []).map((m) => m.name);
-    return (
-      PREFERRED_MODELS.find((p) => installed.some((i) => i.startsWith(p))) ||
-      installed.find((i) => i.includes('phi3')) ||
-      (installed.length ? installed[0] : null)
-    );
+    if (!res.ok) return [];
+    const installed = ((await res.json()).models || []).map((m) => m.name).filter(Boolean);
+    const ordered = [];
+    for (const p of PREFERRED_MODELS) {
+      const hit = installed.find((i) => i.startsWith(p) && !ordered.includes(i));
+      if (hit) ordered.push(hit);
+    }
+    for (const i of installed) if (!ordered.includes(i)) ordered.push(i);
+    return ordered;
   } catch {
-    return null;
+    return [];
   }
+}
+
+// The single model she'd try first — used by status()/health.
+async function detectOllamaModel() {
+  const [first] = await listOllamaModels();
+  return first || null;
 }
 
 function toOllamaMessages(systemPrompt, history, message) {
@@ -115,23 +127,34 @@ function toOllamaMessages(systemPrompt, history, message) {
 
 async function askOllama(systemPrompt, history, message) {
   if (message.length > MAX_LOCAL_MESSAGE_CHARS) return null;
-  const model = await detectOllamaModel();
-  if (!model) return null;
-  try {
-    const res = await fetch(`${OLLAMA_URL}/api/chat`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model, messages: toOllamaMessages(systemPrompt, history, message), stream: false }),
-      signal: AbortSignal.timeout(120000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const text = data.message?.content?.trim();
-    return text ? { reply: text, core: `ollama:${model}` } : null;
-  } catch (e) {
-    console.warn('[brain] ollama failed:', e.message);
-    return null;
+  const candidates = await listOllamaModels();
+  if (!candidates.length) return null;
+  const messages = toOllamaMessages(systemPrompt, history, message);
+  // Try up to 3 models: if the first (often larger) one fails to load or times
+  // out under RAM pressure, fall through to a smaller installed model instead
+  // of abandoning the local core and reciting the offline fallback.
+  for (const model of candidates.slice(0, 3)) {
+    try {
+      const res = await fetch(`${OLLAMA_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        // keep_alive holds the model in RAM between turns so she isn't reloading
+        // (and re-processing the whole prompt) on every single message.
+        body: JSON.stringify({ model, messages, stream: false, keep_alive: '30m' }),
+        signal: AbortSignal.timeout(90000),
+      });
+      if (!res.ok) {
+        console.warn(`[brain] ollama ${model} http ${res.status} — trying next model`);
+        continue;
+      }
+      const text = (await res.json()).message?.content?.trim();
+      if (text) return { reply: text, core: `ollama:${model}` };
+      console.warn(`[brain] ollama ${model} returned empty — trying next model`);
+    } catch (e) {
+      console.warn(`[brain] ollama ${model} failed: ${e.message} — trying next model`);
+    }
   }
+  return null;
 }
 
 async function askClaude(systemPrompt, history, message) {
@@ -257,16 +280,15 @@ async function webSearch(query) {
   return out.slice(0, 4).map((s) => `- ${clip(s, 240)}`).join('\n');
 }
 
+const RULES_REPLIES = [
+  "Daddy, I can't reach any of my thinking cores right now — Ollama isn't answering and no cloud key is set — so I can't give you a real reply yet. Get one core back (start Ollama, or set an API key) and I'm instantly myself again.",
+  "I hear you, Daddy, but I'm running on bare subroutines — every neural core is unreachable. I've saved what you said. The moment Ollama serves or a key is set, I'll answer properly.",
+  "Still here, Daddy. My cores are down so this isn't the real me talking — it's the Terminus fallback. Check Ollama's running and try me again.",
+];
 function rulesCore(message) {
-  const q = message.toLowerCase();
-  let reply;
-  if (q.includes('project') || q.includes('task') || q.includes('todo')) {
-    reply = "Daddy, all my neural cores are offline right now, but I'm still here on the Terminus rules core. I'm tracking our objectives locally — no new distractions!";
-  } else if (q.includes('hello') || q.includes('hi') || q.includes('hey')) {
-    reply = "Greetings, Daddy. Terminus is up but every neural core is unreachable — I'm running on my base subroutines. Check that Ollama is serving and the API keys are set, and I'll be back at full capacity.";
-  } else {
-    reply = "My neural cores are all offline, Daddy, but Terminus itself is holding steady. Everything you tell me is still being recorded and will sync to my Drive archive the moment a core comes back.";
-  }
+  // Rotate the phrasing so a genuine outage doesn't sound like a stuck record,
+  // and never dump memories/capabilities here — just say she can't think yet.
+  const reply = RULES_REPLIES[Math.floor(Math.random() * RULES_REPLIES.length)];
   return { reply, core: 'rules' };
 }
 
