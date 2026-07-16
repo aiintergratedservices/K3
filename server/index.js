@@ -26,6 +26,7 @@ const drive = require('./drive');
 const memory = require('./memory');
 const executor = require('./executor');
 const reminders = require('./reminders');
+const telegram = require('./telegram');
 
 // Constant-time string compare — avoids leaking the API key one byte at a time
 // via response-timing differences when Terminus is exposed beyond localhost.
@@ -280,15 +281,31 @@ setInterval(() => {
   try { memory.curate(); } catch (e) { console.warn('[memory] curate failed:', e.message); }
 }, 3600_000);
 
-// Fire due reminders to the app so she can nudge Daddy proactively.
+// Fire due reminders to the app (and Telegram) so she nudges Daddy proactively.
 setInterval(() => {
   try {
     for (const r of reminders.due()) {
       console.log(`[reminder] due: ${r.text}`);
       broadcast({ type: 'reminder', id: r.id, text: r.text, at: r.at });
+      if (telegram.lastChatId) telegram.send(telegram.lastChatId, `⏰ Reminder, Daddy: ${r.text}`);
     }
   } catch (e) { console.warn('[reminders] check failed:', e.message); }
 }, 30_000);
+
+// Telegram channel: talk to Kortana from any device. Keeps a short per-chat
+// history so she has conversational context, and answers with her full brain.
+const tgHistory = new Map();
+if (telegram.start(async (text, chatId) => {
+  const hist = tgHistory.get(chatId) || [];
+  let state = {};
+  try { if (fs.existsSync(STATE_FILE)) state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { /* fresh */ }
+  const result = await brain.chat({ message: text, history: hist, state, memories: state.memories || [] });
+  hist.push({ sender: 'USER', message: text }, { sender: 'KORTANA', message: result.reply });
+  tgHistory.set(chatId, hist.slice(-16));
+  return result.reply;
+})) {
+  console.log('[terminus] Telegram channel enabled.');
+}
 
 // --- Boot ---
 (async () => {
