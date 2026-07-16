@@ -25,6 +25,7 @@ const brain = require('./brain');
 const drive = require('./drive');
 const memory = require('./memory');
 const executor = require('./executor');
+const reminders = require('./reminders');
 
 // Constant-time string compare — avoids leaking the API key one byte at a time
 // via response-timing differences when Terminus is exposed beyond localhost.
@@ -278,6 +279,16 @@ setInterval(() => broadcast({ type: 'heartbeat', at: Date.now(), awakeDevices: a
 setInterval(() => {
   try { memory.curate(); } catch (e) { console.warn('[memory] curate failed:', e.message); }
 }, 3600_000);
+
+// Fire due reminders to the app so she can nudge Daddy proactively.
+setInterval(() => {
+  try {
+    for (const r of reminders.due()) {
+      console.log(`[reminder] due: ${r.text}`);
+      broadcast({ type: 'reminder', id: r.id, text: r.text, at: r.at });
+    }
+  } catch (e) { console.warn('[reminders] check failed:', e.message); }
+}, 30_000);
 
 // --- Boot ---
 (async () => {

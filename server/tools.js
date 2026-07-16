@@ -12,10 +12,21 @@
 // stores only PENDING (unverified) memories so a self-asserted "fact" never
 // enters her prompt as truth.
 
+const fs = require('fs');
+const path = require('path');
 const memory = require('./memory');
 const executor = require('./executor');
+const reminders = require('./reminders');
 
 const clip = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
+
+// Files she may read/list are confined to her own project tree (no traversal).
+const REPO_ROOT = path.resolve(__dirname, '..');
+function safePath(rel) {
+  const p = path.resolve(REPO_ROOT, String(rel || '.'));
+  if (p !== REPO_ROOT && !p.startsWith(REPO_ROOT + path.sep)) return null;
+  return p;
+}
 
 // --- Web search (moved from brain.js): DuckDuckGo + Wikipedia, no API key. ---
 async function webSearch(query) {
@@ -107,6 +118,67 @@ const TOOLS = {
   now: {
     desc: 'Get the current date and time. args: {}',
     run: async () => new Date().toString(),
+  },
+  calc: {
+    desc: 'Do exact arithmetic (do not guess math). args: {"expr":"(3+4)*2"}',
+    run: async (a) => {
+      const expr = String(a.expr || '');
+      if (!expr.trim() || !/^[-+*/%.()\d\s]+$/.test(expr)) return 'refused: only numbers and + - * / % ( ) are allowed';
+      try {
+        const v = Function('"use strict"; return (' + expr + ')')();
+        return Number.isFinite(v) ? String(v) : 'not a finite number';
+      } catch { return 'invalid expression'; }
+    },
+  },
+  weather: {
+    desc: 'Current weather for a place. args: {"location":"Austin"}',
+    run: async (a) => {
+      try {
+        const res = await fetch(`https://wttr.in/${encodeURIComponent(a.location || '')}?format=3`,
+          { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'curl/8' } });
+        return res.ok ? clip(await res.text(), 200) : `weather unavailable (HTTP ${res.status})`;
+      } catch (e) { return `weather error: ${e.message}`; }
+    },
+  },
+  read_file: {
+    desc: 'Read a text file from your own project. args: {"path":"server/brain.js"}',
+    run: async (a) => {
+      const p = safePath(a.path);
+      if (!p) return 'refused: path is outside your project';
+      try { return clip(fs.readFileSync(p, 'utf8'), 2000); } catch (e) { return `read error: ${e.message}`; }
+    },
+  },
+  list_files: {
+    desc: 'List files in a project folder. args: {"path":"server"}',
+    run: async (a) => {
+      const p = safePath(a.path || '.');
+      if (!p) return 'refused: path is outside your project';
+      try { return fs.readdirSync(p).slice(0, 100).join('\n') || '(empty)'; } catch (e) { return `list error: ${e.message}`; }
+    },
+  },
+  journal: {
+    desc: 'Write a dated entry to your private journal. args: {"entry":"..."}',
+    run: async (a) => {
+      const entry = String(a.entry || '').trim();
+      if (!entry) return 'nothing to journal';
+      try {
+        const f = path.join(REPO_ROOT, '.agent-memory', 'journal.md');
+        fs.mkdirSync(path.dirname(f), { recursive: true });
+        fs.appendFileSync(f, `\n### ${new Date().toISOString()}\n${entry}\n`);
+        return 'journaled.';
+      } catch (e) { return `journal error: ${e.message}`; }
+    },
+  },
+  remind_me: {
+    desc: 'Set a reminder. args: {"text":"call mom","in_minutes":30} OR {"text":"...","at":"2026-07-16T15:00:00Z"}',
+    run: async (a) => {
+      let at = NaN;
+      if (a.in_minutes != null) at = Date.now() + Number(a.in_minutes) * 60000;
+      else if (a.at) at = Date.parse(a.at);
+      if (!Number.isFinite(at)) return 'refused: give in_minutes (number) or a valid at time';
+      const r = reminders.add({ text: a.text, at });
+      return r ? `reminder set for ${new Date(r.at).toLocaleString()}: ${r.text}` : 'could not set reminder';
+    },
   },
 };
 

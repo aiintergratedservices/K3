@@ -7,9 +7,11 @@ const path = require('path');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kortana-tools-'));
 process.env.KORTANA_MEM_FILE = path.join(tmp, 'lessons.json');
+process.env.KORTANA_REMINDERS_FILE = path.join(tmp, 'reminders.json');
 
 const tools = require('../tools');
 const brain = require('../brain');
+const reminders = require('../reminders');
 
 let n = 0;
 const ok = (m) => { console.log('  ✓', m); n++; };
@@ -64,6 +66,35 @@ const ok = (m) => { console.log('  ✓', m); n++; };
   r = await tools.runTool('web_fetch', { url: 'file:///etc/passwd' });
   assert(r.ok && /refused/.test(r.result));
   ok('web_fetch refuses non-http(s) URLs');
+
+  // --- calc: exact math + rejects non-math ---
+  r = await tools.runTool('calc', { expr: '(3+4)*2' });
+  assert(r.ok && r.result === '14');
+  r = await tools.runTool('calc', { expr: 'process.exit(1)' });
+  assert(r.ok && /refused/.test(r.result));
+  ok('calc computes math and refuses non-math input');
+
+  // --- read_file / list_files stay inside the project ---
+  r = await tools.runTool('list_files', { path: 'server' });
+  assert(r.ok && r.result.includes('brain.js'));
+  r = await tools.runTool('read_file', { path: 'server/package.json' });
+  assert(r.ok && r.result.includes('kortana-terminus'));
+  r = await tools.runTool('read_file', { path: '../../../../etc/passwd' });
+  assert(r.ok && /refused/.test(r.result));
+  ok('read_file/list_files work in-project and refuse path traversal');
+
+  // --- journal appends ---
+  r = await tools.runTool('journal', { entry: 'first day online' });
+  assert(r.ok && /journaled/.test(r.result));
+  ok('journal writes an entry');
+
+  // --- remind_me sets a reminder that later comes due ---
+  r = await tools.runTool('remind_me', { text: 'ping Daddy', in_minutes: -1 }); // already past
+  assert(r.ok && /reminder set/.test(r.result));
+  const dueNow = reminders.due();
+  assert(dueNow.some((x) => x.text === 'ping Daddy'), 'past-due reminder fires');
+  assert(reminders.due().length === 0, 'a fired reminder does not fire twice');
+  ok('remind_me schedules and fires exactly once');
 
   // --- the agentic loop end-to-end with a mock model ---
   // Round 0: she asks for the time. Round 1: she answers using the result.
