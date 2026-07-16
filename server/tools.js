@@ -180,6 +180,49 @@ const TOOLS = {
       return r ? `reminder set for ${new Date(r.at).toLocaleString()}: ${r.text}` : 'could not set reminder';
     },
   },
+
+  // --- 3 special ones ---
+  pick: {
+    desc: 'Decide for Daddy: choose from options, flip a coin, or roll a die. args: {"options":["tacos","pizza"]} | {"dice":20} | {}',
+    run: async (a) => {
+      if (Array.isArray(a.options) && a.options.length) {
+        const o = a.options.map(String);
+        return `I choose: ${o[Math.floor(Math.random() * o.length)]}`;
+      }
+      if (a.dice) {
+        const n = Math.max(2, Math.min(1000, Number(a.dice) || 6));
+        return `d${n} → ${1 + Math.floor(Math.random() * n)}`;
+      }
+      return `Coin flip → ${Math.random() < 0.5 ? 'heads' : 'tails'}`;
+    },
+  },
+  define: {
+    desc: 'Define an English word. args: {"word":"ephemeral"}',
+    run: async (a) => {
+      const w = String(a.word || '').trim();
+      if (!w) return 'give me a word to define';
+      try {
+        const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(w)}`, { signal: AbortSignal.timeout(6000) });
+        if (!res.ok) return `no definition found for "${w}"`;
+        const j = await res.json();
+        const meaning = j?.[0]?.meanings?.[0];
+        const def = meaning?.definitions?.[0]?.definition;
+        return def ? `${w} (${meaning.partOfSpeech || ''}): ${def}` : `no definition found for "${w}"`;
+      } catch (e) { return `define error: ${e.message}`; }
+    },
+  },
+  time_until: {
+    desc: 'How long until (or since) a date/event. args: {"at":"2026-12-25","label":"Christmas"}',
+    run: async (a) => {
+      const t = Date.parse(a.at);
+      if (!Number.isFinite(t)) return 'give a valid date, e.g. "2026-12-25"';
+      const ms = t - Date.now();
+      const days = Math.floor(Math.abs(ms) / 86400000);
+      const hours = Math.floor((Math.abs(ms) % 86400000) / 3600000);
+      const label = a.label ? String(a.label) : 'then';
+      return ms < 0 ? `${days}d ${hours}h since ${label}` : `${days}d ${hours}h until ${label}`;
+    },
+  },
 };
 
 // Text block injected into her system prompt so she knows the protocol + tools.

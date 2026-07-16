@@ -96,6 +96,19 @@ const ok = (m) => { console.log('  ✓', m); n++; };
   assert(reminders.due().length === 0, 'a fired reminder does not fire twice');
   ok('remind_me schedules and fires exactly once');
 
+  // --- the 3 special tools ---
+  r = await tools.runTool('pick', { options: ['a', 'b', 'c'] });
+  assert(r.ok && /I choose: [abc]/.test(r.result));
+  r = await tools.runTool('pick', { dice: 6 });
+  assert(r.ok && /d6 → [1-6]/.test(r.result));
+  ok('pick chooses from options and rolls dice');
+
+  r = await tools.runTool('time_until', { at: '2999-01-01', label: 'the future' });
+  assert(r.ok && /until the future/.test(r.result));
+  r = await tools.runTool('time_until', { at: 'not-a-date' });
+  assert(r.ok && /valid date/.test(r.result));
+  ok('time_until counts forward and rejects bad dates');
+
   // --- the agentic loop end-to-end with a mock model ---
   // Round 0: she asks for the time. Round 1: she answers using the result.
   let turn = 0;
