@@ -539,7 +539,11 @@ fun KortanaApp(
                             .padding(8.dp),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        // Selected tab expands to fit its label; the rest are compact icons.
+                        // Simplified to two views: CHAT and SETTINGS. Projects,
+                        // Memories, and Self-Code still exist (activeTab 1/2/3 and
+                        // their screens are unchanged) but are no longer top-level
+                        // clutter — Settings is the single home for everything else.
+                        // Selected tab expands to fit its label.
                         val tabWeight = { index: Int -> if (activeTab == index) 2.6f else 1f }
                         TabChip(
                             title = "CHAT",
@@ -550,31 +554,7 @@ fun KortanaApp(
                             modifier = Modifier.weight(tabWeight(0)).testTag("tab_chat")
                         )
                         TabChip(
-                            title = "PROJECTS",
-                            icon = Icons.Default.Assignment,
-                            selected = activeTab == 1,
-                            activeColor = activeColor,
-                            onClick = { activeTab = 1 },
-                            modifier = Modifier.weight(tabWeight(1)).testTag("tab_projects")
-                        )
-                        TabChip(
-                            title = "MEMORIES",
-                            icon = Icons.Default.Memory,
-                            selected = activeTab == 2,
-                            activeColor = activeColor,
-                            onClick = { activeTab = 2 },
-                            modifier = Modifier.weight(tabWeight(2)).testTag("tab_memories")
-                        )
-                        TabChip(
-                            title = "SELF-CODE",
-                            icon = Icons.Default.Code,
-                            selected = activeTab == 3,
-                            activeColor = activeColor,
-                            onClick = { activeTab = 3 },
-                            modifier = Modifier.weight(tabWeight(3)).testTag("tab_self_code")
-                        )
-                        TabChip(
-                            title = "STATUS",
+                            title = "SETTINGS",
                             icon = Icons.Default.Tune,
                             selected = activeTab == 4,
                             activeColor = activeColor,
