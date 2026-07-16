@@ -20,6 +20,10 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 // GPUs instead of phone-local phi3. Configure GPU_API_KEY + optionally base/model.
 const GPU_API_BASE = (process.env.GPU_API_BASE || 'https://integrate.api.nvidia.com/v1').replace(/\/$/, '');
 const GPU_MODEL = process.env.GPU_MODEL || 'meta/llama-3.1-70b-instruct';
+// Big "thinking" models (e.g. Nemotron Ultra) spend tokens reasoning before the
+// answer, so the budget must be generous or content comes back empty. Raise
+// GPU_MAX_TOKENS for reasoning models; keep it modest for plain chat models.
+const GPU_MAX_TOKENS = Number(process.env.GPU_MAX_TOKENS || 2048);
 const MAX_LOCAL_MESSAGE_CHARS = 2000;
 const MAX_PROMPT_MEMORIES = 15;
 const AGENT_MEMORY_DIR = path.join(__dirname, '..', '.agent-memory');
@@ -256,15 +260,19 @@ async function askCloudGpu(systemPrompt, history, message) {
     const res = await fetch(`${GPU_API_BASE}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model: GPU_MODEL, messages, max_tokens: 1024, temperature: 0.7, stream: false }),
-      signal: AbortSignal.timeout(90000),
+      body: JSON.stringify({ model: GPU_MODEL, messages, max_tokens: GPU_MAX_TOKENS, temperature: 0.7, stream: false }),
+      signal: AbortSignal.timeout(120000),
     });
     if (!res.ok) {
       console.warn('[brain] gpu core failed:', res.status, (await res.text().catch(() => '')).slice(0, 200));
       return null;
     }
     const data = await res.json();
-    const text = data.choices?.[0]?.message?.content?.trim();
+    const msg = data.choices?.[0]?.message || {};
+    // Reasoning models return the answer in `content` and the trace in
+    // `reasoning_content`. Use content; only fall back to the trace if that's
+    // all we got (better than nothing), so she never returns empty.
+    const text = (msg.content?.trim()) || (msg.reasoning_content?.trim());
     return text ? { reply: text, core: `gpu:${GPU_MODEL}` } : null;
   } catch (e) {
     console.warn('[brain] gpu core failed:', e.message);
