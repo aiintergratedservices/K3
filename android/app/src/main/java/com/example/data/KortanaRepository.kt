@@ -42,6 +42,26 @@ class KortanaRepository(context: Context) {
         return dao.getPersonality() ?: KortanaPersonality().also { dao.savePersonality(it) }
     }
 
+    // Messages that imply Kortana should look at / act on the current screen.
+    private val screenIntent = Regex(
+        "\\b(screen|tap|click|press|open|launch|scroll|swipe|type|button|toggle|" +
+            "setting|settings|notification|go back|home|do it|do this|do that|for me|help me with)\\b",
+        RegexOption.IGNORE_CASE
+    )
+
+    /**
+     * Her EYES: when her accessibility hands are enabled and Daddy wants her to
+     * see or act on the screen, prepend the live on-screen element list (each with
+     * tap coordinates) to her brain input so she acts on what's really there
+     * instead of guessing blind. No-ops silently when hands are off.
+     */
+    private fun withScreenContext(message: String): String {
+        val hands = KortanaAccessibilityService.instance ?: return message
+        if (!screenIntent.containsMatchIn(message)) return message
+        val screen = try { hands.readScreen() } catch (e: Exception) { return message }
+        return "$message\n\n[LIVE SCREEN — your eyes right now; act with a tapText action or the @(x,y) coordinates shown below]\n$screen"
+    }
+
     suspend fun processUserMessage(messageText: String, imageBase64: String? = null, mimeType: String = "image/jpeg"): KortanaTurnResult {
         // 1. Persist User Message
         val userMsg = ChatMessage(sender = "USER", message = messageText)
@@ -52,8 +72,10 @@ class KortanaRepository(context: Context) {
         val memories = dao.getAllMemories()
         val chatHistory = dao.getChatMessagesFlow().firstOrNull() ?: emptyList()
 
-        // 3. Query the routing brain (Ollama local -> Claude backup -> Gemini last resort)
-        val result = KortanaBrain.queryKortana(appContext, messageText, currentState, memories, chatHistory, imageBase64, mimeType)
+        // 3. Query the routing brain (Ollama local -> Claude backup -> Gemini last
+        //    resort). Give her the live screen first when she's meant to see/act.
+        val brainInput = withScreenContext(messageText)
+        val result = KortanaBrain.queryKortana(appContext, brainInput, currentState, memories, chatHistory, imageBase64, mimeType)
 
         // 4. Persist Kortana's Response
         val kortanaMsg = ChatMessage(sender = "KORTANA", message = result.reply)

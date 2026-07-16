@@ -139,9 +139,63 @@ class KortanaAccessibilityService : AccessibilityService() {
         true
     } catch (e: Exception) { false }
 
+    /** Find a visible element by its text/description and tap its center — no coordinates needed. */
+    fun tapByText(label: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val node = findByText(root, label.trim().lowercase()) ?: return false
+        val b = Rect(); node.getBoundsInScreen(b)
+        return tap(b.centerX(), b.centerY())
+    }
+
+    private fun findByText(node: AccessibilityNodeInfo?, needle: String): AccessibilityNodeInfo? {
+        if (node == null || needle.isEmpty()) return null
+        val t = node.text?.toString()?.lowercase().orEmpty()
+        val d = node.contentDescription?.toString()?.lowercase().orEmpty()
+        if ((node.isClickable || node.isEditable) && (t.contains(needle) || d.contains(needle))) return node
+        for (i in 0 until node.childCount) {
+            val hit = findByText(node.getChild(i), needle)
+            if (hit != null) return hit
+        }
+        // fall back to any node with the text, even if not marked clickable
+        if (t.contains(needle) || d.contains(needle)) return node
+        return null
+    }
+
+    /** Long-press at a point (e.g. to open a context menu). */
+    fun longPress(x: Int, y: Int): Boolean {
+        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, 600L))
+            .build()
+        return dispatchGesture(gesture, null, null)
+    }
+
+    /** Scroll the first scrollable container. direction ∈ up | down (backward/forward). */
+    fun scroll(direction: String): Boolean {
+        val scrollable = findScrollable(rootInActiveWindow) ?: return false
+        val action = when (direction.trim().lowercase()) {
+            "up", "back", "backward", "previous" -> AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+            else -> AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+        }
+        return scrollable.performAction(action)
+    }
+
+    private fun findScrollable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isScrollable) return node
+        for (i in 0 until node.childCount) {
+            val hit = findScrollable(node.getChild(i))
+            if (hit != null) return hit
+        }
+        return null
+    }
+
     /** Execute a single structured action emitted by her brain. */
     fun execute(action: DeviceAction): Boolean = when (action.type.lowercase()) {
         "tap", "click" -> tap(action.x, action.y)
+        "taptext", "tapbytext", "clicktext" -> tapByText(action.text)
+        "longpress", "longclick" -> longPress(action.x, action.y)
+        "scroll" -> scroll(action.text)
         "swipe" -> swipe(action.x, action.y, action.x2, action.y2)
         "type", "settext" -> setText(action.x, action.y, action.text)
         "global" -> global(action.text)
