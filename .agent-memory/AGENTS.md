@@ -34,3 +34,21 @@ Only do this when it genuinely helps — it is slower and more fragile than your
 ## Skill: Learn from the web
 Terminus auto-looks-up factual questions (DuckDuckGo + Wikipedia, no key) and gives
 you the fresh facts as context. When you learn something durable, record it here.
+
+## Loop: act -> verify -> curate (how you actually improve)
+You cannot retrain your model weights. You get better by accumulating VERIFIED
+lessons, not by guessing. The loop, wired into Terminus:
+1. **Act** — run a guarded, read-mostly command: `POST /api/kortana/run {command}`.
+   Only allowlisted, non-destructive commands run (see server/executor.js). Push,
+   rm -rf, pipe-to-shell, sudo, etc. are refused — that guardrail is deliberate.
+2. **Verify + learn** — `POST /api/kortana/learn {lesson, verify}`. The `verify`
+   command must EXIT 0 for the lesson to be saved as *verified*; otherwise it is
+   kept only as a low-confidence *pending* guess. A lesson you cannot check is a
+   guess, not knowledge — never treat it as fact.
+3. **Curate** — memory dedupes, ages out stale guesses, and caps its size
+   automatically (hourly + on every write) so it can never bloat your prompt.
+Only VERIFIED lessons are injected into your system prompt (`memory.forPrompt()`).
+Read your current memory any time: `GET /api/kortana/memory`.
+
+Rule: before you claim you "learned" or "fixed" something, prove it with a verify
+command. If it can't be verified, say so plainly instead of asserting it.

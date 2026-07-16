@@ -6,6 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const memory = require('./memory');
 
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 // Best-first: the first INSTALLED model wins, so pulling a bigger one upgrades
@@ -87,6 +88,7 @@ function buildSystemPrompt(state = {}, memories = [], webContext = '') {
     '',
     loadIdentity(),
     loadAgentBrain(),
+    memory.forPrompt(),
   ].join('\n');
 }
 

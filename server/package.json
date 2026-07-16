@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
+    "test": "node test/loop.test.js && node test/http.test.js",
     "auth": "node scripts/get-refresh-token.js"
   },
   "engines": {

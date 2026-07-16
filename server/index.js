@@ -23,6 +23,8 @@ const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const brain = require('./brain');
 const drive = require('./drive');
+const memory = require('./memory');
+const executor = require('./executor');
 
 // Constant-time string compare — avoids leaking the API key one byte at a time
 // via response-timing differences when Terminus is exposed beyond localhost.
@@ -132,6 +134,66 @@ app.post('/api/kortana/task', (req, res) => {
   res.json({ ok: true, taskId });
 });
 
+// --- Self-improvement loop: act -> verify -> curate -----------------------
+// This is the realistic version. She can't retrain her weights, so instead she
+// runs a guarded action, VERIFIES it with a checkable command, and only then
+// records a lesson. Verified lessons flow into her prompt; unverified guesses
+// age out. Curation keeps the store small so it never bloats the local model.
+
+// Act: run a single guarded, allowlisted command and stream its output.
+app.post('/api/kortana/run', async (req, res) => {
+  const command = String((req.body && req.body.command) || '').slice(0, 2000);
+  if (!command.trim()) return res.status(400).json({ error: 'command required' });
+  const verdict = executor.classify(command);
+  if (!verdict.allowed) {
+    broadcast({ type: 'run_blocked', command, reason: verdict.reason });
+    return res.status(403).json({ error: 'blocked', reason: verdict.reason });
+  }
+  const runId = Date.now().toString(36);
+  broadcast({ type: 'run_start', runId, command });
+  const result = await executor.run(command, {
+    cwd: path.dirname(AGENT_MEMORY_DIR),
+    onLine: (chan, line) => broadcast({ type: 'run_output', runId, chan, line }),
+  });
+  broadcast({ type: 'run_end', runId, code: result.code, timedOut: result.timedOut });
+  res.json(result);
+});
+
+// Verify + learn: run a checkable command; record the lesson only if it passes.
+// body: { lesson, verify, category?, source? }
+app.post('/api/kortana/learn', async (req, res) => {
+  const { lesson, verify, category, source } = req.body || {};
+  if (!lesson || !verify) return res.status(400).json({ error: 'lesson and verify command required' });
+  const verdict = executor.classify(verify);
+  if (!verdict.allowed) return res.status(403).json({ error: 'verify blocked', reason: verdict.reason });
+  const learnId = Date.now().toString(36);
+  broadcast({ type: 'learn_start', learnId, lesson, verify });
+  const result = await executor.run(String(verify).slice(0, 2000), {
+    cwd: path.dirname(AGENT_MEMORY_DIR),
+    onLine: (chan, line) => broadcast({ type: 'learn_output', learnId, chan, line }),
+  });
+  const passed = result.allowed && result.code === 0 && !result.timedOut;
+  const recorded = memory.record({
+    text: String(lesson).slice(0, 500),
+    category: (category || 'GENERAL').toUpperCase().slice(0, 24),
+    source: source || 'learn',
+    verified: passed,
+    evidence: `${passed ? 'verify passed' : 'verify failed'}: ${String(verify).slice(0, 200)}`,
+  });
+  broadcast({ type: 'learn_end', learnId, passed, status: recorded?.status });
+  res.json({ passed, exitCode: result.code, lesson: recorded, stats: memory.stats() });
+});
+
+// Read her curated memory (verified lessons + pending guesses) for the UI.
+app.get('/api/kortana/memory', (req, res) => {
+  res.json({ stats: memory.stats(), lessons: memory.all() });
+});
+
+// Manually force a curation pass (also runs automatically on a timer).
+app.post('/api/kortana/memory/curate', (req, res) => {
+  res.json(memory.curate());
+});
+
 // UI reads her "brain" (norms + recent logs) to render it in-app, not the terminal.
 app.get('/api/kortana/brain', (req, res) => {
   const tail = (p, n) => {
@@ -210,6 +272,12 @@ wss.on('connection', (ws, req) => {
 });
 
 setInterval(() => broadcast({ type: 'heartbeat', at: Date.now(), awakeDevices: awake.size }), 60_000);
+
+// Keep her memory curated (dedupe, age out stale guesses, cap size) so the
+// prompt never grows until the local model chokes. Hourly is plenty.
+setInterval(() => {
+  try { memory.curate(); } catch (e) { console.warn('[memory] curate failed:', e.message); }
+}, 3600_000);
 
 // --- Boot ---
 (async () => {
