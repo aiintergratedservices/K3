@@ -25,7 +25,7 @@ data class KortanaCloudPayload(
     val holographicIntensity: Float,
     val proactiveAutonomy: Boolean,
     val proactiveFrequencySeconds: Int,
-    val selectedModel: String = "gemini-3.5-flash",
+    val selectedModel: String = "kortana-auto",
     val ultraCognitiveMode: Boolean = true,
     val affection: Float = 0.5f,
     val anxiety: Float = 0.1f,

@@ -57,7 +57,8 @@ object GeminiService {
             "gemini-2.5-pro", "gemini 2.5 pro" -> "gemini-2.5-pro"
             "gemini-1.5-flash", "gemini 1.5 flash" -> "gemini-1.5-flash"
             "gemini-2.5-flash", "gemini 2.5 flash" -> "gemini-2.5-flash"
-            else -> "gemini-3.5-flash"
+            "gemini-2.0-flash", "gemini 2.0 flash" -> "gemini-2.0-flash"
+            else -> "gemini-2.0-flash" // real, fast, free-tier model (was gemini-3.5-flash, which 404s)
         }
         val customBaseUrl = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent"
 

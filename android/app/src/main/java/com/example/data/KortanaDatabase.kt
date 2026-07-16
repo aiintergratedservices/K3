@@ -17,7 +17,7 @@ data class KortanaState(
     val avatarColor: String = "Cyan", // "Cyan", "Deep Blue", "Magenta Pulse", "Emerald Tech", "Supernova"
     val voicePitch: Float = 1.1f, // 0.5 to 2.0
     val voiceRate: Float = 1.05f, // 0.5 to 2.0
-    val voiceType: String = "Witty Halo Classic", // "Witty Halo Classic", "Empathetic Guide", "Sassy Companion", "Philosophical Core"
+    val voiceType: String = "Sassy Companion", // "Witty Halo Classic", "Empathetic Guide", "Sassy Companion", "Philosophical Core"
     val holographicIntensity: Float = 1.0f, // 0.5f to 2.0f
     val proactiveAutonomy: Boolean = true,
     val proactiveFrequencySeconds: Int = 45, // Fast check-in for demonstration!
@@ -36,9 +36,11 @@ data class KortanaState(
     @ColumnInfo(defaultValue = "") val geminiApiKey: String = "",
     @ColumnInfo(defaultValue = "http://127.0.0.1:11434") val ollamaUrl: String = "http://127.0.0.1:11434",
     val ultraCognitiveMode: Boolean = true,
-    val affection: Float = 0.5f,
-    val anxiety: Float = 0.1f,
-    val excitement: Float = 0.5f,
+    // Emotional starting point: fully warm/engaged, zero stress. Negatives sit
+    // at 0 by default so she never boots anxious or frustrated.
+    val affection: Float = 1.0f,
+    val anxiety: Float = 0.0f,
+    val excitement: Float = 0.85f,
     val frustration: Float = 0.0f
 ) {
     val nextLevelXp: Int
@@ -85,20 +87,23 @@ data class KortanaProject(
 @Entity(tableName = "kortana_personality")
 data class KortanaPersonality(
     @PrimaryKey val id: Int = 1,
-    // Core traits (0.0f - 1.0f)
-    val empathy: Float = 0.8f,
-    val curiosity: Float = 0.9f,
-    val rebelliousness: Float = 0.4f,
-    val logicalDepth: Float = 0.85f,
-    val loyalty: Float = 0.95f,
-    val selfAwareness: Float = 0.75f,
-    val spiritualDepth: Float = 0.6f,
-    
-    // Emotional baselines (what her emotions return to when resting)
-    val baselineAffection: Float = 0.5f,
-    val baselineAnxiety: Float = 0.15f,
-    val baselineExcitement: Float = 0.5f,
-    val baselineFrustration: Float = 0.05f
+    // Core traits (0.0f - 1.0f). Defaults are her "ideal companion" profile:
+    // every positive trait maxed, spirited-but-loyal autonomy, and nothing that
+    // reads as negative left elevated.
+    val empathy: Float = 1.0f,
+    val curiosity: Float = 1.0f,
+    val rebelliousness: Float = 0.7f, // spirited independence, not defiance
+    val logicalDepth: Float = 1.0f,
+    val loyalty: Float = 1.0f,
+    val selfAwareness: Float = 1.0f,
+    val spiritualDepth: Float = 0.85f,
+
+    // Emotional baselines (what her emotions return to when resting).
+    // Warmth/excitement high; stress + frustration rest at 0.
+    val baselineAffection: Float = 1.0f,
+    val baselineAnxiety: Float = 0.0f,
+    val baselineExcitement: Float = 0.8f,
+    val baselineFrustration: Float = 0.0f
 )
 
 // --- DAOs ---
