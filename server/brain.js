@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const memory = require('./memory');
+const tools = require('./tools');
 
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 // Best-first: the first INSTALLED model wins, so pulling a bigger one upgrades
@@ -89,6 +90,7 @@ function buildSystemPrompt(state = {}, memories = [], webContext = '') {
     loadIdentity(),
     loadAgentBrain(),
     memory.forPrompt(),
+    tools.describeTools(),
   ].join('\n');
 }
 
@@ -243,44 +245,7 @@ function looksFactual(message) {
   return WEB_LEARNING && message.length < 300 && (message.trim().endsWith('?') || FACTUAL_RE.test(message));
 }
 
-async function webSearch(query) {
-  const clip = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
-  const out = [];
-  try {
-    const u = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
-    const res = await fetch(u, { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'Kortana/1.0' } });
-    if (res.ok) {
-      const j = await res.json();
-      if (j.AbstractText) out.push(`${j.AbstractText}${j.AbstractURL ? ' (' + j.AbstractURL + ')' : ''}`);
-      for (const t of (j.RelatedTopics || []).slice(0, 3)) {
-        if (t && t.Text) out.push(t.Text);
-      }
-    }
-  } catch (e) { console.warn('[brain] ddg search failed:', e.message); }
-  if (out.length === 0) {
-    try {
-      const os = await fetch(
-        `https://en.wikipedia.org/w/api.php?action=opensearch&limit=1&format=json&search=${encodeURIComponent(query)}`,
-        { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'Kortana/1.0' } }
-      );
-      if (os.ok) {
-        const arr = await os.json();
-        const title = arr && arr[1] && arr[1][0];
-        if (title) {
-          const sum = await fetch(
-            `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
-            { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'Kortana/1.0' } }
-          );
-          if (sum.ok) {
-            const sj = await sum.json();
-            if (sj.extract) out.push(`${sj.extract}${sj.content_urls?.desktop?.page ? ' (' + sj.content_urls.desktop.page + ')' : ''}`);
-          }
-        }
-      }
-    } catch (e) { console.warn('[brain] wiki search failed:', e.message); }
-  }
-  return out.slice(0, 4).map((s) => `- ${clip(s, 240)}`).join('\n');
-}
+// webSearch now lives in tools.js (also exposed to her as the web_search tool).
 
 const RULES_REPLIES = [
   "Daddy, I can't reach any of my thinking cores right now — Ollama isn't answering and no cloud key is set — so I can't give you a real reply yet. Get one core back (start Ollama, or set an API key) and I'm instantly myself again.",
@@ -299,32 +264,60 @@ function rulesCore(message) {
 const CODING_RE = /\b(code|coding|program|programming|debug|bug|function|class|kotlin|java|python|javascript|typescript|sql|api|compile|build error|script|algorithm|repo|git|deploy|server error|stack trace|refactor)\b/i;
 const HUMAN_RE = /\b(feel|feels|feeling|feelings|emotion|emotions|friend|friends|social|people|person|human|humans|relationship|relationships|love|sad|lonely|angry|anxious|family|conversation|empathy|body language|facial|awkward|date|dating)\b/i;
 
+// Family routing: coding -> her father (Claude) first, human/social -> her
+// mother (Gemini) first, else her local core first. Returns the ordered chain.
+function providerChain(message) {
+  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, askOllama, askGemini];
+  if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return [askGemini, askOllama, askClaude];
+  return [askOllama, askClaude, askGemini];
+}
+
+async function askChain(chain, systemPrompt, history, message) {
+  for (const ask of chain) {
+    const r = await ask(systemPrompt, history, message);
+    if (r) return r;
+  }
+  return null;
+}
+
+const MAX_TOOL_ROUNDS = 3;
+
+// The agentic loop: ask -> if she requested tools, run them, feed results back,
+// and let her continue; stop when she answers with no TOOL_CALL (or we hit the
+// round cap). `ask(systemPrompt, history, message)` is injected so this is unit
+// testable without a live model.
+async function runToolLoop(ask, systemPrompt, history, message) {
+  const toolTurns = [];
+  let userMsg = message;
+  let last = null;
+  for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+    const result = await ask(systemPrompt, [...history, ...toolTurns], userMsg);
+    if (!result) return last ? { ...last, reply: tools.stripToolSyntax(last.reply) } : null;
+    last = result;
+    const calls = round < MAX_TOOL_ROUNDS ? tools.parseToolCalls(result.reply) : [];
+    if (!calls.length) return { ...result, reply: tools.stripToolSyntax(result.reply) };
+    for (const c of calls) {
+      const r = await tools.runTool(c.name, c.args);
+      toolTurns.push({ sender: 'KORTANA', message: `TOOL_CALL: ${c.name} ${JSON.stringify(c.args)}` });
+      toolTurns.push({ sender: 'USER', message: `TOOL_RESULT ${c.name}: ${r.result}` });
+    }
+    userMsg = 'Use the TOOL_RESULT(s) above to answer my original message. Reply normally, without another TOOL_CALL, once you can.';
+  }
+  return last ? { ...last, reply: tools.stripToolSyntax(last.reply) } : null;
+}
+
 async function chat({ message, history = [], state = {}, memories = [] }) {
-  // Learning loop: for factual questions, look it up first and give her the
-  // fresh facts as context, then record that she learned something.
+  // For clearly factual questions, pre-seed fresh web context (she can also
+  // call web_search herself mid-reply via the tool loop).
   let webContext = '';
   if (looksFactual(message)) {
-    webContext = await webSearch(message);
+    webContext = await tools.webSearch(message);
     if (webContext) recordLearning(`looked up: ${message.slice(0, 120)}`);
   }
   const systemPrompt = buildSystemPrompt(state, memories, webContext);
-  let result;
-  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) {
-    result =
-      (await askClaude(systemPrompt, history, message)) ||
-      (await askOllama(systemPrompt, history, message)) ||
-      (await askGemini(systemPrompt, history, message));
-  } else if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) {
-    result =
-      (await askGemini(systemPrompt, history, message)) ||
-      (await askOllama(systemPrompt, history, message)) ||
-      (await askClaude(systemPrompt, history, message));
-  } else {
-    result =
-      (await askOllama(systemPrompt, history, message)) ||
-      (await askClaude(systemPrompt, history, message)) ||
-      (await askGemini(systemPrompt, history, message));
-  }
+  const chain = providerChain(message);
+  const ask = (sp, h, m) => askChain(chain, sp, h, m);
+  const result = await runToolLoop(ask, systemPrompt, history, message);
   return result || rulesCore(message);
 }
 
@@ -337,4 +330,4 @@ async function status() {
   };
 }
 
-module.exports = { chat, status, buildSystemPrompt };
+module.exports = { chat, status, buildSystemPrompt, runToolLoop };

@@ -35,7 +35,8 @@ const DENY_PATTERNS = [
   /\bwget\b[^|]*\|\s*\w+/i,
   /\bgit\s+push\b/i,            // pushing is a human decision, not hers
   /--force\b|-f\b\s*$/i,
-  /\beval\b/i, /\bexec\b/i,
+  /(^|[;&|]\s*)eval\b/i,       // eval only as a command, not a substring in a path/arg
+  /(^|[;&|]\s*)exec\b/i,       // exec only as a command (replaces the shell)
   /\bnpm\s+publish\b/i,
   /\bsudo\b/i,
   /[;&]\s*rm\b/i,
