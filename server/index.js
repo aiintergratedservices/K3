@@ -55,10 +55,12 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 const app = express();
 app.use(express.json({ limit: '200mb' }));
 
-// The app sends the raw key in the Authorization header; accept Bearer too.
+// Accept the key from Authorization (Bearer or raw) OR the x-api-key header —
+// the Android app sends x-api-key, so both must be honored or every app request
+// 401s and she falls back to her offline core.
 function authorized(req) {
   if (!API_KEY) return true; // no key configured — open (LAN/localhost use)
-  return keyMatches(req.get('authorization') || '');
+  return keyMatches(req.get('authorization') || '') || keyMatches(req.get('x-api-key') || '');
 }
 app.use('/api', (req, res, next) => {
   if (!authorized(req)) return res.status(401).json({ error: 'unauthorized' });
@@ -244,9 +246,9 @@ function broadcast(obj) {
 }
 
 wss.on('connection', (ws, req) => {
-  // WS uses the same key as the HTTP API (native clients send the header).
+  // WS uses the same key as the HTTP API (authorization or x-api-key header).
   if (API_KEY) {
-    if (!keyMatches(req.headers['authorization'] || '')) {
+    if (!keyMatches(req.headers['authorization'] || '') && !keyMatches(req.headers['x-api-key'] || '')) {
       ws.close(4401, 'unauthorized');
       return;
     }
