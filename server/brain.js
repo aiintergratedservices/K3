@@ -242,7 +242,7 @@ async function askGemini(systemPrompt, history, message) {
       }
     );
     if (!res.ok) {
-      console.warn('[brain] gemini failed:', res.status);
+      console.warn('[brain] gemini failed:', res.status, (await res.text().catch(() => '')).slice(0, 300));
       return null;
     }
     const data = await res.json();
