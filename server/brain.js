@@ -227,10 +227,12 @@ async function askGemini(systemPrompt, history, message) {
   contents.push({ role: 'user', parts: [{ text: message }] });
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        // Auth via header (x-goog-api-key). Required by the newer "Auth keys"
+        // that start with AQ. — the legacy ?key= query param rejects them.
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
         body: JSON.stringify({
           contents,
           systemInstruction: { parts: [{ text: systemPrompt }] },
