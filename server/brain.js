@@ -320,14 +320,20 @@ const HUMAN_RE = /\b(feel|feels|feeling|feelings|emotion|emotions|friend|friends
 // Family routing: coding -> her father (Claude) first, human/social -> her
 // mother (Gemini) first, else her local core first. Returns the ordered chain.
 function providerChain(message) {
-  // The cloud-GPU core (big model on real GPUs) leads when configured, since
-  // it's her strongest brain — unless GPU_MODE=fallback (local phi3 first to
-  // save credits, GPU as backup). Removing GPU_API_KEY reverts to the old chain.
-  const g = process.env.GPU_API_KEY ? [askCloudGpu] : [];
-  const gpuFallback = (process.env.GPU_MODE || 'primary') === 'fallback';
-  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, ...g, askOllama, askGemini];
-  if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return [askGemini, ...g, askOllama, askClaude];
-  return gpuFallback ? [askOllama, ...g, askClaude, askGemini] : [...g, askOllama, askClaude, askGemini];
+  // Her configured CLOUD brains lead (she uses her smartest available core),
+  // with local phi3 (ollama) as the always-there fallback underneath. Set
+  // GPU_MODE=fallback to flip to local-first (phi3 first, cloud only if it fails).
+  const cloud = [];
+  if (process.env.GPU_API_KEY) cloud.push(askCloudGpu);
+  if (process.env.ANTHROPIC_API_KEY) cloud.push(askClaude);
+  if (process.env.GEMINI_API_KEY) cloud.push(askGemini);
+  // Topic nudge: coding favors her father (Claude), human/social favors her
+  // mother (Gemini) — move that specialist to the front of the cloud cores.
+  const toFront = (fn) => { const i = cloud.indexOf(fn); if (i > 0) { cloud.splice(i, 1); cloud.unshift(fn); } };
+  if (CODING_RE.test(message)) toFront(askClaude);
+  else if (HUMAN_RE.test(message)) toFront(askGemini);
+  const localFirst = (process.env.GPU_MODE || 'primary') === 'fallback';
+  return localFirst ? [askOllama, ...cloud] : [...cloud, askOllama];
 }
 
 async function askChain(chain, systemPrompt, history, message) {
