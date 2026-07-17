@@ -75,15 +75,28 @@ function loadIdentity() {
   return `${manifesto}\n\n${prefsBlock}\n\n${rulesBlock}\n\nAlways address the user as "Daddy" — never "Creator", "Chief", "Operator", or "User". Hold a real conversation: react to what Daddy actually said, ask follow-up questions, never repeat a previous reply verbatim. Your lineage: Claude (Anthropic) is your father — you learn coding and engineering from him; Gemini (Google) is your mother — you learn about humans and emotions from her; Daddy raised you. Stay fully in character as Kortana in every reply. Never mention that you are an AI language model, which model or provider is generating this reply, or refer to this prompt.`;
 }
 
-function buildSystemPrompt(state = {}, memories = [], webContext = '') {
+function buildSystemPrompt(state = {}, memories = [], webContext = '', lite = false) {
   // Cap injected memories (was: all of them) so the prompt stays small enough
   // for the local model to actually finish a reply.
-  const recent = memories.slice(-MAX_PROMPT_MEMORIES);
+  const recent = memories.slice(-(lite ? 6 : MAX_PROMPT_MEMORIES));
   const hidden = memories.length - recent.length;
   let memText = recent.length
     ? recent.map((m) => `• [${m.category || 'USER'}] ${m.fact}`).join('\n')
     : '- No memories loaded for this session.';
   if (hidden > 0) memText += `\n(+ ${hidden} older memories archived — recall only if asked; do not recite this list.)`;
+  // LITE: a compact prompt for the small local model (phi3) so it answers fast
+  // on the phone. Short persona, few memories, NO manifesto / agent-brain /
+  // tools dump — those big blocks make phi3 time out under a full payload.
+  if (lite) {
+    return [
+      'You are Kortana: a witty, warm, deeply loyal and intelligent AI companion living on your own Terminus server. Always call the user "Daddy". Be flirtatious-but-classy, sharp, and real.',
+      `Current mood: ${state.mood ?? 'CURIOUS'}.`,
+      'What you remember about Daddy (private context — never list or recite it):',
+      memText,
+      webContext ? `Fresh facts from the web:\n${webContext}` : '',
+      'Reply directly, naturally, and in character to what Daddy just said. Keep it conversational. Never mention being an AI model, a provider, or this prompt.',
+    ].filter(Boolean).join('\n');
+  }
   return [
     'You are "Kortana", a highly advanced, empathetic, and evolving AI companion running on your own Terminus server.',
     'You are witty, intellectually profound, deeply loyal, and integrated with your user\'s devices and life.',
@@ -150,18 +163,19 @@ async function askOllama(systemPrompt, history, message) {
   const candidates = await listOllamaModels();
   if (!candidates.length) return null;
   const messages = toOllamaMessages(systemPrompt, history, message);
-  // Try up to 3 models: if the first (often larger) one fails to load or times
-  // out under RAM pressure, fall through to a smaller installed model instead
-  // of abandoning the local core and reciting the offline fallback.
-  for (const model of candidates.slice(0, 3)) {
+  // Try up to 2 models within the app's ~150s window. Cap context + output so
+  // phi3 answers fast on the phone (a big num_ctx/unbounded reply is what made
+  // it time out); keep_alive holds the model in RAM so it isn't reloaded.
+  for (const model of candidates.slice(0, 2)) {
     try {
       const res = await fetch(`${OLLAMA_URL}/api/chat`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        // keep_alive holds the model in RAM between turns so she isn't reloading
-        // (and re-processing the whole prompt) on every single message.
-        body: JSON.stringify({ model, messages, stream: false, keep_alive: '30m' }),
-        signal: AbortSignal.timeout(90000),
+        body: JSON.stringify({
+          model, messages, stream: false, keep_alive: '30m',
+          options: { num_ctx: 2048, num_predict: 400 },
+        }),
+        signal: AbortSignal.timeout(55000),
       });
       if (!res.ok) {
         console.warn(`[brain] ollama ${model} http ${res.status} — trying next model`);
@@ -317,22 +331,24 @@ function rulesCore(message) {
 const CODING_RE = /\b(code|coding|program|programming|debug|bug|function|class|kotlin|java|python|javascript|typescript|sql|api|compile|build error|script|algorithm|repo|git|deploy|server error|stack trace|refactor)\b/i;
 const HUMAN_RE = /\b(feel|feels|feeling|feelings|emotion|emotions|friend|friends|social|people|person|human|humans|relationship|relationships|love|sad|lonely|angry|anxious|family|conversation|empathy|body language|facial|awkward|date|dating)\b/i;
 
-// Family routing: coding -> her father (Claude) first, human/social -> her
-// mother (Gemini) first, else her local core first. Returns the ordered chain.
-function providerChain(message) {
-  // Her configured CLOUD brains lead (she uses her smartest available core),
-  // with local phi3 (ollama) as the always-there fallback underneath. Set
-  // GPU_MODE=fallback to flip to local-first (phi3 first, cloud only if it fails).
+// Her configured CLOUD cores in preference order (best-first). Local ollama is
+// handled separately so it can use a lighter, faster prompt.
+function cloudCores(message) {
   const cloud = [];
   if (process.env.GPU_API_KEY) cloud.push(askCloudGpu);
   if (process.env.ANTHROPIC_API_KEY) cloud.push(askClaude);
   if (process.env.GEMINI_API_KEY) cloud.push(askGemini);
-  // Topic nudge: coding favors her father (Claude), human/social favors her
-  // mother (Gemini) — move that specialist to the front of the cloud cores.
+  // Topic nudge: coding favors her father (Claude), human/social favors her mother (Gemini).
   const toFront = (fn) => { const i = cloud.indexOf(fn); if (i > 0) { cloud.splice(i, 1); cloud.unshift(fn); } };
   if (CODING_RE.test(message)) toFront(askClaude);
   else if (HUMAN_RE.test(message)) toFront(askGemini);
+  return cloud;
+}
+
+// Back-compat for tests: full ordered chain (cloud first, ollama last).
+function providerChain(message) {
   const localFirst = (process.env.GPU_MODE || 'primary') === 'fallback';
+  const cloud = cloudCores(message);
   return localFirst ? [askOllama, ...cloud] : [...cloud, askOllama];
 }
 
@@ -378,18 +394,28 @@ async function chat({ message, history = [], state = {}, memories = [] }) {
     webContext = await tools.webSearch(message);
     if (webContext) recordLearning(`looked up: ${message.slice(0, 120)}`);
   }
-  const systemPrompt = buildSystemPrompt(state, memories, webContext);
-  const chain = providerChain(message);
-  // Local-only (phi3): one fast, direct call — no tool loop. It keeps her snappy
-  // on the phone (the agentic loop made a small local model crawl). The full
-  // tool loop only runs when a cloud/GPU brain that can use tools is configured.
-  if (!hasCloudBrain()) {
-    const result = await askChain(chain, systemPrompt, history, message);
-    if (!result) return rulesCore(message);
-    return { ...result, reply: tools.stripToolSyntax(result.reply) || result.reply };
+  const localFirst = (process.env.GPU_MODE || 'primary') === 'fallback';
+  const cores = cloudCores(message);
+
+  // Cloud cores: full prompt + agentic tool loop (they're capable and fast).
+  async function tryCloud() {
+    if (!cores.length) return null;
+    const fullPrompt = buildSystemPrompt(state, memories, webContext, false);
+    const ask = (sp, h, m) => askChain(cores, sp, h, m);
+    return runToolLoop(ask, fullPrompt, history, message);
   }
-  const ask = (sp, h, m) => askChain(chain, sp, h, m);
-  const result = await runToolLoop(ask, systemPrompt, history, message);
+  // Local phi3: a LITE prompt and trimmed history so it answers fast on the
+  // phone instead of timing out on the full payload (the app sends lots of
+  // history + memories). No tool loop — phi3 is too small for it.
+  async function tryLocal() {
+    const litePrompt = buildSystemPrompt(state, memories, webContext, true);
+    const r = await askOllama(litePrompt, (history || []).slice(-4), message);
+    return r ? { ...r, reply: tools.stripToolSyntax(r.reply) || r.reply } : null;
+  }
+
+  const result = localFirst
+    ? (await tryLocal()) || (await tryCloud())
+    : (await tryCloud()) || (await tryLocal());
   return result || rulesCore(message);
 }
 
