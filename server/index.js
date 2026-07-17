@@ -104,6 +104,7 @@ app.get('/api/sync', async (req, res) => {
 // --- Server-side brain ---
 app.post('/api/brain', async (req, res) => {
   const { message, history, state, memories } = req.body || {};
+  console.log(`[api/brain] HIT from ${req.ip} — msg="${String(message || '').slice(0, 50)}"`);
   if (!message) return res.status(400).json({ error: 'message required' });
   try {
     const result = await brain.chat({ message, history, state, memories });
