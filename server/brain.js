@@ -99,8 +99,15 @@ function buildSystemPrompt(state = {}, memories = [], webContext = '') {
     loadIdentity(),
     loadAgentBrain(),
     memory.forPrompt(),
-    tools.describeTools(),
+    // Only teach tools to a capable cloud/GPU brain — the local phi3 is too
+    // small to use them well and the extra prompt just slows it down.
+    hasCloudBrain() ? tools.describeTools() : '',
   ].join('\n');
+}
+
+// True when a real cloud/GPU brain is configured (can actually use tools).
+function hasCloudBrain() {
+  return Boolean(process.env.GPU_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY);
 }
 
 // Ordered list of installed models to try: preferred (often larger/better)
@@ -365,6 +372,14 @@ async function chat({ message, history = [], state = {}, memories = [] }) {
   }
   const systemPrompt = buildSystemPrompt(state, memories, webContext);
   const chain = providerChain(message);
+  // Local-only (phi3): one fast, direct call — no tool loop. It keeps her snappy
+  // on the phone (the agentic loop made a small local model crawl). The full
+  // tool loop only runs when a cloud/GPU brain that can use tools is configured.
+  if (!hasCloudBrain()) {
+    const result = await askChain(chain, systemPrompt, history, message);
+    if (!result) return rulesCore(message);
+    return { ...result, reply: tools.stripToolSyntax(result.reply) || result.reply };
+  }
   const ask = (sp, h, m) => askChain(chain, sp, h, m);
   const result = await runToolLoop(ask, systemPrompt, history, message);
   return result || rulesCore(message);
