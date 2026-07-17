@@ -14,7 +14,7 @@ const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 // her automatically (ollama pull llama3.2:3b / phi3:mini once RAM is freed).
 const PREFERRED_MODELS = ['phi3.5', 'phi3:mini', 'llama3.2:3b', 'qwen2.5:3b', 'gemma2:2b', 'phi3', 'llama3.2:1b'];
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5';
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 // Cloud-GPU core: any OpenAI-compatible endpoint (NVIDIA API Catalog, Together,
 // Groq, Fireworks, a vLLM box, ...). Lets her think with a big model on real
 // GPUs instead of phone-local phi3. Configure GPU_API_KEY + optionally base/model.
