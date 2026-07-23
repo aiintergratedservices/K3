@@ -1,0 +1,65 @@
+# Kortana's full stack in one command — ties Terminus (Node) + Ollama together,
+# with an optional Kali toolbox. Built to run on a real machine / GPU host,
+# which is where her coding brain belongs (the phone runs the lighter Termux
+# path instead — see server/deploy/termux-start.sh).
+#
+#   docker compose up -d              # Terminus + Ollama
+#   docker compose --profile tools up -d kali   # add her Kali toolbox
+#   docker compose exec ollama ollama pull qwen2.5-coder:3b   # give her a coding brain
+#
+# IMPORTANT: set TERMINUS_API_KEY in server/.env — Terminus binds to localhost
+# only until a key is set, so without it the container is NOT reachable from the
+# host even with the port mapping below. Point the app's Cloud Sync / Kortana
+# URL at http://<host-ip>:3300 and enter the same key.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+    # GPU (NVIDIA): install the nvidia-container-toolkit, then uncomment to give
+    # her a real GPU brain — the whole point of moving off the phone.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  terminus:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    depends_on:
+      - ollama
+    ports:
+      - "3300:3300"
+    env_file:
+      - path: server/.env
+        required: false
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - HOST=0.0.0.0
+      - DATA_DIR=/app/data
+    volumes:
+      - terminus-data:/app/data
+    restart: unless-stopped
+
+  # Optional Kali toolbox she can drive via the allowlisted shell tool.
+  # Off by default; bring it up with:  docker compose --profile tools up -d kali
+  kali:
+    image: kalilinux/kali-rolling
+    profiles: [tools]
+    command: sleep infinity
+    tty: true
+    volumes:
+      - kali-home:/root
+
+volumes:
+  ollama:
+  terminus-data:
+  kali-home:
