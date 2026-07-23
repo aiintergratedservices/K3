@@ -12,7 +12,14 @@ const tools = require('./tools');
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 // Best-first: the first INSTALLED model wins, so pulling a bigger one upgrades
 // her automatically (ollama pull llama3.2:3b / phi3:mini once RAM is freed).
-const PREFERRED_MODELS = ['phi3.5', 'phi3:mini', 'llama3.2:3b', 'qwen2.5:3b', 'gemma2:2b', 'phi3', 'llama3.2:1b'];
+// Coding brains lead the list: once RAM allows (8 GB+), pulling one of these
+// makes her code-capable automatically — `ollama pull qwen2.5-coder:3b`. They
+// only take effect when actually installed, so listing them here is harmless
+// on low-RAM phones (they're simply skipped until pulled).
+const PREFERRED_MODELS = [
+  'qwen2.5-coder:7b', 'qwen2.5-coder:3b', 'deepseek-coder:6.7b', 'qwen2.5-coder:1.5b',
+  'phi3.5', 'phi3:mini', 'llama3.2:3b', 'qwen2.5:3b', 'gemma2:2b', 'phi3', 'llama3.2:1b',
+];
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const MAX_LOCAL_MESSAGE_CHARS = 2000;
