@@ -110,6 +110,32 @@ app.post('/api/brain', async (req, res) => {
   }
 });
 
+// --- Coach: watch what Daddy is doing and proactively guide him ---
+// Takes a snapshot of what's on his screen / in his session and returns ONE
+// short nudge (tip / warning / next step), or null when nothing needs saying.
+// Used by BashMeSilly (terminal activity) and, later, the phone-wide
+// accessibility service (readScreen()). Reuses the full brain chain.
+app.post('/api/kortana/coach', async (req, res) => {
+  const { screen, note, history } = req.body || {};
+  if (!screen && !note) return res.status(400).json({ error: 'screen or note required' });
+  const prompt =
+    'COACH MODE — you are watching over Daddy while he works, as his coding companion. ' +
+    'Based on what is on his screen right now, give ONE short, proactive, genuinely useful ' +
+    'nudge in a single sentence, in your own voice — a tip, a warning about a mistake, or the ' +
+    'next step. Prefer coaching him toward doing it himself over doing it for him. If nothing ' +
+    'needs saying right now, reply with exactly "SILENT" and nothing else.\n\n' +
+    (note ? ('What he is doing: ' + String(note).slice(0, 500) + '\n') : '') +
+    'On screen / in his session now:\n' + String(screen || '').slice(0, 4000);
+  try {
+    const result = await brain.chat({ message: prompt, history: Array.isArray(history) ? history : [] });
+    const reply = ((result && result.reply) || '').trim();
+    const silent = !reply || /^SILENT\b/i.test(reply);
+    res.json({ tip: silent ? null : reply, core: result && result.core });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // --- Agent task harness (UI-driven, streamed over WebSocket) --------------
 // The UI calls this instead of you opening Termux. The task is passed to
 // harness.sh as a SINGLE argv argument (via spawn, never a shell string), so a
