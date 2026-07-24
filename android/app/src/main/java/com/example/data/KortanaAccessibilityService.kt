@@ -31,8 +31,22 @@ class KortanaAccessibilityService : AccessibilityService() {
         Log.i(TAG, "Accessibility connected — Kortana's hands are online.")
     }
 
-    // We act on demand (driven by her brain), not on every UI event.
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    // On-demand actions are driven by her brain. Additionally, when the owner
+    // has turned on proactive Coach mode, feed each meaningful screen change to
+    // KortanaCoach so she can watch and guide unprompted. KortanaCoach handles
+    // its own debounce/de-dup and no-ops entirely when coaching is off.
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+        val type = event.eventType
+        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
+        // Skip Kortana's own app to avoid coaching on her own UI / feedback loops.
+        if (event.packageName?.toString() == applicationContext.packageName) return
+        if (!KortanaCoach.isEnabled(applicationContext)) return
+        val screen = try { readScreen() } catch (e: Exception) { return }
+        KortanaCoach.onScreen(applicationContext, screen)
+    }
+
     override fun onInterrupt() {}
 
     override fun onDestroy() {

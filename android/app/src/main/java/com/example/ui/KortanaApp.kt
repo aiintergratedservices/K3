@@ -45,6 +45,8 @@ import com.example.data.Memory
 import com.example.data.SynapticScript
 import com.example.data.KortanaProject
 import com.example.data.KortanaPersonality
+import com.example.data.KortanaCoach
+import com.example.data.KortanaAccessibilityService
 import com.example.ui.theme.*
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -4061,6 +4063,54 @@ fun SystemDiagnostics(
                         onCheckedChange = {
                             autoSync = it
                             onUpdateCloudSettings(cloudUrl, apiKey, it)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = activeColor,
+                            checkedTrackColor = activeColor.copy(alpha = 0.4f),
+                            uncheckedThumbColor = Color.DarkGray,
+                            uncheckedTrackColor = CyberBorder
+                        )
+                    )
+                }
+
+                // Proactive Coach Toggle — Kortana watches your screen (phone-wide,
+                // via her accessibility "eyes") and sends short guiding notifications
+                // through Terminus /api/kortana/coach. Off until turned on here AND
+                // Accessibility is enabled; toggling on opens Accessibility settings.
+                val coachContext = LocalContext.current
+                var coachOn by remember { mutableStateOf(KortanaCoach.isEnabled(coachContext)) }
+                LaunchedEffect(cloudUrl, apiKey) {
+                    KortanaCoach.configure(coachContext, cloudUrl.substringBefore("/api/").trimEnd('/'), apiKey)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "PROACTIVE COACH (WATCH MY SCREEN)",
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = "Kortana watches what you're doing (needs Accessibility ON) and sends short guiding notifications via Terminus.",
+                            color = CyberTextMuted,
+                            fontSize = 9.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    Switch(
+                        checked = coachOn,
+                        onCheckedChange = { on ->
+                            coachOn = on
+                            val base = cloudUrl.substringBefore("/api/").trimEnd('/')
+                            KortanaCoach.setEnabled(coachContext, on, base, apiKey)
+                            if (on && !KortanaAccessibilityService.isEnabled()) {
+                                KortanaAccessibilityService.openSettings(coachContext)
+                            }
                         },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = activeColor,
