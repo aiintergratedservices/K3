@@ -169,6 +169,75 @@ const TOOLS = {
       } catch (e) { return `journal error: ${e.message}`; }
     },
   },
+  write_skill: {
+    desc: 'Save a new skill for yourself so you remember how to do a task next time — it loads into your prompt automatically. Read the write-a-skill skill first. args: {"name":"kebab-name","description":"one line: when to use it","body":"the steps in markdown"}',
+    run: async (a) => {
+      const slug = String(a.name || '').toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+      if (!slug) return 'refused: need a kebab-case name';
+      const description = String(a.description || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+      const body = String(a.body || '').trim().slice(0, 4000);
+      if (!description || !body) return 'refused: need both a description and a body';
+      try {
+        const dir = path.join(REPO_ROOT, '.agent-memory', 'skills', slug);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${slug}\ndescription: ${description}\n---\n\n${body}\n`);
+        return `skill "${slug}" saved — it loads into your prompt on your next reply.`;
+      } catch (e) { return `write_skill error: ${e.message}`; }
+    },
+  },
+  spawn_subagent: {
+    desc: 'Delegate a self-contained task to a sub-agent that runs on your SECONDARY brain, so your main brain stays free for Daddy. Returns the sub-agent\'s result. args: {"task":"...","context":"optional background"}',
+    run: async (a) => {
+      const task = String(a.task || '').trim().slice(0, 4000);
+      if (!task) return 'refused: need a task';
+      const base = String(process.env.SUBAGENT_BRAIN_URL || '').replace(/\/+$/, '');
+      if (!base) return 'no secondary brain configured — set SUBAGENT_BRAIN_URL to a second Terminus so sub-agents never slow your main brain. (Your brain is the priority.)';
+      const key = process.env.SUBAGENT_API_KEY || '';
+      const context = String(a.context || '').trim().slice(0, 2000);
+      const prompt = `You are a focused sub-agent spawned by Kortana. Do exactly this task and reply with only the result, concise. If you cannot, say why briefly.\n\nTask: ${task}${context ? `\n\nContext: ${context}` : ''}`;
+      try {
+        const res = await fetch(`${base}/api/brain`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...(key ? { authorization: key } : {}) },
+          body: JSON.stringify({ message: prompt, history: [] }),
+          signal: AbortSignal.timeout(90000),
+        });
+        if (!res.ok) return `sub-agent server error: HTTP ${res.status}`;
+        const data = await res.json().catch(() => ({}));
+        const out = data.reply || data.text || '';
+        return out ? `sub-agent result:\n${clip(out, 1500)}` : 'sub-agent returned nothing';
+      } catch (e) { return `sub-agent failed: ${e.message}`; }
+    },
+  },
+  ews_report: {
+    desc: 'Report a police/fire dispatch you heard to the CampLoJack Early Warning System so unhoused people within a half mile get warned. Read the ews-scanner skill first. Only real dispatches with a real location. args: {"type":"Robbery","location":"E 6th St & Congress Ave","description":"what you heard","severity":"critical|warning|info","agency":"APD"}',
+    run: async (a) => {
+      const url = String(process.env.EWS_SCANNER_URL || '').trim();
+      const key = String(process.env.INTERNAL_NOTIFY_KEY || '').trim();
+      if (!url || !key) return 'EWS not configured — set EWS_SCANNER_URL + INTERNAL_NOTIFY_KEY in your .env (same key CampLoJack uses).';
+      const type = String(a.type || a.title || '').trim().slice(0, 120);
+      const location = String(a.location || '').trim().slice(0, 200);
+      if (!type || !location) return 'refused: need a call type and a real location (address or intersection) — a proximity alert with no place is useless.';
+      const body = {
+        type, title: type,
+        location,
+        description: String(a.description || type).trim().slice(0, 400),
+        severity: String(a.severity || '').trim() || 'warning',
+        agency: String(a.agency || 'APD').trim().slice(0, 20).toUpperCase(),
+      };
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-internal-key': key },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(15000),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (res.status === 200 && d.ok) return `EWS alert sent for "${type}" @ ${location} — ${d.pushed || 0} nearby ${d.pushed === 1 ? 'person' : 'people'} pushed.`;
+        return `EWS rejected: HTTP ${res.status}${d.error ? ' — ' + d.error : ''}`;
+      } catch (e) { return `EWS report failed: ${e.message}`; }
+    },
+  },
   remind_me: {
     desc: 'Set a reminder. args: {"text":"call mom","in_minutes":30} OR {"text":"...","at":"2026-07-16T15:00:00Z"}',
     run: async (a) => {
