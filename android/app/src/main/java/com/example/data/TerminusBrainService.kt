@@ -24,10 +24,14 @@ import java.util.concurrent.TimeUnit
 object TerminusBrainService {
     private const val TAG = "TerminusBrainService"
 
+    // connectTimeout was 5s, which failed whenever her free Render host was
+    // waking from sleep (~50s cold start). 60s lets the ping and first brain
+    // call ride out a cold start instead of falsely reporting her unreachable.
     private val client = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
+        .connectTimeout(60, TimeUnit.SECONDS)
         .readTimeout(150, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     private val mediaType = "application/json; charset=utf-8".toMediaType()

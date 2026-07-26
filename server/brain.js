@@ -22,6 +22,9 @@ const PREFERRED_MODELS = [
 ];
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+// Groq: free API, no card — fast cloud brain. The way to run her without a big
+// box (Ollama needs GBs of RAM; Groq needs only a free key).
+const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 const MAX_LOCAL_MESSAGE_CHARS = 2000;
 const MAX_PROMPT_MEMORIES = 15;
 const AGENT_MEMORY_DIR = path.join(__dirname, '..', '.agent-memory');
@@ -96,9 +99,33 @@ function buildSystemPrompt(state = {}, memories = [], webContext = '') {
     '',
     loadIdentity(),
     loadAgentBrain(),
+    loadSkills(),
     memory.forPrompt(),
     tools.describeTools(),
   ].join('\n');
+}
+
+// Load her skills as a compact index (name + when-to-use). Kept lean for the
+// local model — she reads the full SKILL.md with read_file when a task matches.
+// Reads the folder fresh each call, so a skill she just wrote takes effect on
+// her very next reply.
+function loadSkills() {
+  try {
+    const dir = path.join(AGENT_MEMORY_DIR, 'skills');
+    const lines = [];
+    for (const name of fs.readdirSync(dir)) {
+      let desc = '';
+      try {
+        const txt = fs.readFileSync(path.join(dir, name, 'SKILL.md'), 'utf8');
+        const m = txt.match(/^description:\s*(.+)$/mi);
+        desc = m ? m[1].trim() : '';
+      } catch { continue; }
+      lines.push(`- ${name}: ${desc}`.slice(0, 300));
+    }
+    if (!lines.length) return '';
+    return '\n\nYOUR SKILLS — when a task matches one, read its full steps first with '
+      + '`read_file .agent-memory/skills/<name>/SKILL.md`:\n' + lines.join('\n');
+  } catch { return ''; }
 }
 
 // Ordered list of installed models to try: preferred (often larger/better)
@@ -243,6 +270,33 @@ async function askGemini(systemPrompt, history, message) {
   }
 }
 
+// Groq — free, no-card cloud brain (OpenAI-compatible API). Fast enough that she
+// never "times out before she can respond" the way a small phone model does.
+async function askGroq(systemPrompt, history, message) {
+  const key = process.env.GROQ_API_KEY;
+  if (!key) return null;
+  const messages = [{ role: 'system', content: systemPrompt }];
+  for (const h of (history || []).slice(-12)) {
+    messages.push({ role: h.sender === 'USER' ? 'user' : 'assistant', content: h.message });
+  }
+  messages.push({ role: 'user', content: message });
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model: GROQ_MODEL, messages, temperature: 0.7, max_tokens: 2048 }),
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!res.ok) { console.warn('[brain] groq failed:', res.status); return null; }
+    const data = await res.json();
+    const text = data.choices?.[0]?.message?.content?.trim();
+    return text ? { reply: text, core: `groq:${GROQ_MODEL}` } : null;
+  } catch (e) {
+    console.warn('[brain] groq failed:', e.message);
+    return null;
+  }
+}
+
 // --- Web-search "learning" loop (no API key) --------------------------------
 // This is the honest version of "learn from the internet": she looks up facts
 // and uses them as context (retrieval), and records that she did so to her disk
@@ -274,9 +328,11 @@ const HUMAN_RE = /\b(feel|feels|feeling|feelings|emotion|emotions|friend|friends
 // Family routing: coding -> her father (Claude) first, human/social -> her
 // mother (Gemini) first, else her local core first. Returns the ordered chain.
 function providerChain(message) {
-  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, askOllama, askGemini];
-  if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return [askGemini, askOllama, askClaude];
-  return [askOllama, askClaude, askGemini];
+  // Groq + Gemini are the free, no-card cloud cores, so they sit right behind
+  // Ollama — she stays smart and fast even with no local model and no paid key.
+  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, askOllama, askGroq, askGemini];
+  if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return [askGemini, askOllama, askGroq, askClaude];
+  return [askOllama, askGroq, askGemini, askClaude];
 }
 
 async function askChain(chain, systemPrompt, history, message) {
@@ -332,8 +388,9 @@ async function status() {
   const model = await detectOllamaModel();
   return {
     ollama: model ? { reachable: true, model } : { reachable: false },
-    claude: Boolean(process.env.ANTHROPIC_API_KEY),
+    groq: Boolean(process.env.GROQ_API_KEY),
     gemini: Boolean(process.env.GEMINI_API_KEY),
+    claude: Boolean(process.env.ANTHROPIC_API_KEY),
   };
 }
 
