@@ -77,7 +77,7 @@ async function api(path, opts = {}) {
   console.log(`Service: ${svc.name} (${svc.id})`);
 
   // 2) Merge the two vars into her existing set (don't clobber the rest).
-  const current = await api(`/services/${svc.id}/env-vars?limit=200`);
+  const current = await api(`/services/${svc.id}/env-vars?limit=100`);
   const vars = (Array.isArray(current) ? current : [])
     .map((x) => x.envVar || x)
     .map((v) => ({ key: v.key, value: v.value }));
