@@ -272,9 +272,12 @@ async function askGemini(systemPrompt, history, message) {
 
 // Groq — free, no-card cloud brain (OpenAI-compatible API). Fast enough that she
 // never "times out before she can respond" the way a small phone model does.
-async function askGroq(systemPrompt, history, message) {
+// Lighter, higher-rate-limit Groq model to fall back to when the big one is
+// throttled — so a 429 keeps her real voice instead of dropping to bare rules.
+const GROQ_FALLBACK_MODEL = process.env.GROQ_FALLBACK_MODEL || 'llama-3.1-8b-instant';
+
+async function callGroqModel(model, systemPrompt, history, message) {
   const key = process.env.GROQ_API_KEY;
-  if (!key) return null;
   const messages = [{ role: 'system', content: systemPrompt }];
   for (const h of (history || []).slice(-12)) {
     messages.push({ role: h.sender === 'USER' ? 'user' : 'assistant', content: h.message });
@@ -284,17 +287,32 @@ async function askGroq(systemPrompt, history, message) {
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model: GROQ_MODEL, messages, temperature: 0.7, max_tokens: 2048 }),
+      body: JSON.stringify({ model, messages, temperature: 0.7, max_tokens: 1024 }),
       signal: AbortSignal.timeout(60000),
     });
-    if (!res.ok) { console.warn('[brain] groq failed:', res.status); return null; }
+    if (!res.ok) { console.warn(`[brain] groq ${model} failed:`, res.status); return { status: res.status }; }
     const data = await res.json();
     const text = data.choices?.[0]?.message?.content?.trim();
-    return text ? { reply: text, core: `groq:${GROQ_MODEL}` } : null;
+    return text ? { reply: text, core: `groq:${model}` } : { status: 0 };
   } catch (e) {
-    console.warn('[brain] groq failed:', e.message);
-    return null;
+    console.warn(`[brain] groq ${model} error:`, e.message);
+    return { status: -1 };
   }
+}
+
+async function askGroq(systemPrompt, history, message) {
+  if (!process.env.GROQ_API_KEY) return null;
+  // Free-tier Groq rate-limits (429) the big model under load — that's what
+  // dropped her to the bare 'rules' core mid-conversation. On a rate-limit or
+  // too-large error, retry on the lighter high-limit model so she keeps her
+  // real voice instead of going silent.
+  const primary = await callGroqModel(GROQ_MODEL, systemPrompt, history, message);
+  if (primary.reply) return { reply: primary.reply, core: primary.core };
+  if ((primary.status === 429 || primary.status === 413) && GROQ_FALLBACK_MODEL !== GROQ_MODEL) {
+    const fb = await callGroqModel(GROQ_FALLBACK_MODEL, systemPrompt, history, message);
+    if (fb.reply) return { reply: fb.reply, core: fb.core };
+  }
+  return null;
 }
 
 // --- Web-search "learning" loop (no API key) --------------------------------
