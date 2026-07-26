@@ -23,6 +23,7 @@ const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const brain = require('./brain');
 const drive = require('./drive');
+const persist = require('./persist');
 const memory = require('./memory');
 const executor = require('./executor');
 const reminders = require('./reminders');
@@ -333,6 +334,10 @@ setInterval(() => {
 
 // --- Boot ---
 (async () => {
+  // Restore her permanent memory FIRST, so her self-written skills + learned
+  // lessons are on disk before the first request reads them. This is what makes
+  // her growth survive a restart of her free host.
+  await persist.restore();
   await drive.init();
   // Without an API key the server only ever binds to localhost, so an open
   // API can never be reached from off the device. Set TERMINUS_API_KEY (and
@@ -341,5 +346,6 @@ setInterval(() => {
   server.listen(PORT, host, () => {
     console.log(`[terminus] Kortana's Terminus server online at ${host}:${PORT}.`);
     if (!API_KEY) console.warn('[terminus] TERMINUS_API_KEY not set — bound to localhost only. Set a key to allow other devices to connect.');
+    persist.startAutosave();   // keep her permanent memory current as she grows
   });
 })();
