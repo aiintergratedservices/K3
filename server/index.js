@@ -244,6 +244,19 @@ app.get('/api/drive', async (req, res) => {
   }
 });
 
+// Root route. The Android app's Cloud Sync "ping" GETs the bare server URL
+// (no /health, no /api path). Terminus had no GET / route, so it 404'd and the
+// app read that as OFFLINE even while /health returned 200. A public 200 here
+// makes the ping succeed without needing an APK rebuild.
+app.get('/', (req, res) => {
+  res.json({
+    service: 'kortana-terminus',
+    status: 'ok',
+    uptimeSeconds: Math.floor((Date.now() - startTime) / 1000),
+    hint: 'Kortana is awake. See /health for cores, /api/* for the brain.',
+  });
+});
+
 app.get('/health', async (req, res) => {
   const cores = await brain.status();
   res.json({
