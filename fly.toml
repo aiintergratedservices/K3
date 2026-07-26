@@ -1,0 +1,82 @@
+# Fly.io config for Kortana's Terminus server — so she runs always-on in the
+# cloud instead of on the phone via Termux (which Android keeps killing, which
+# is why she "loses connection"). The build context is the REPO ROOT because
+# server/Dockerfile copies server/, identity/ and .agent-memory/ from here.
+#
+# Deploy from the repo root:
+#   fly launch --copy-config --no-deploy   # first time: creates the app
+#   fly volumes create terminus_data --size 1 --region dfw
+#   fly secrets set TERMINUS_API_KEY=<a-long-random-string> \
+#     ANTHROPIC_API_KEY=sk-ant-... \
+#     GEMINI_API_KEY=<optional> \
+#     GOOGLE_CLIENT_ID=<optional> GOOGLE_CLIENT_SECRET=<optional> GOOGLE_REFRESH_TOKEN=<optional>
+#   fly deploy
+#
+# TERMINUS_API_KEY is REQUIRED: without it Terminus binds to localhost only and
+# nothing outside the container can reach her. It also becomes her API key — put
+# the SAME value in the Android app's Cloud Sync "API key" field and point its
+# Kortana URL at https://kortana-terminus.fly.dev (app names are globally unique
+# on Fly, so if that's taken, pick another and use its .fly.dev URL).
+#
+# No Ollama here (a cheap shared VM can't run it) — her brain falls through to
+# Claude (ANTHROPIC_API_KEY), then Gemini, then her local rules core, so she
+# still answers. Give her a coding brain later by running Ollama on a GPU host
+# and pointing OLLAMA_URL at it.
+
+app = "kortana-terminus"
+primary_region = "dfw"
+
+[build]
+  dockerfile = "server/Dockerfile"
+
+[env]
+  PORT = "3300"
+  HOST = "0.0.0.0"
+  NODE_ENV = "production"
+  DATA_DIR = "/app/data"
+  # Nothing is listening on 11434 in this VM, so the Ollama probe fails fast
+  # (connection refused) and the brain moves on to the cloud cores.
+  OLLAMA_URL = "http://127.0.0.1:11434"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 3300
+  # Always-on: she should never "go to sleep" — that was the whole point of
+  # moving her off the phone.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 200
+    soft_limit = 150
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  # /health is unauthenticated and reports core status; it calls the brain's
+  # core probe, so give it a little room.
+  [[services.http_checks]]
+    interval = "30s"
+    timeout = "10s"
+    grace_period = "30s"
+    method = "get"
+    path = "/health"
+
+[[vm]]
+  # Terminus + Node + the agent harness (bash/git/curl). 256mb is tight; 512mb
+  # keeps headroom for her tool runs.
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[mounts]
+  source = "terminus_data"
+  destination = "/app/data"
