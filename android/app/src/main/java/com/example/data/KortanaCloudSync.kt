@@ -87,9 +87,13 @@ interface KortanaCloudSyncApi {
 
 object KortanaCloudSyncClient {
     fun createService(baseUrl: String): KortanaCloudSyncApi {
+        // Render's free tier can take ~50s to wake from sleep. Short timeouts
+        // made a cold start look like a dead server ("OFFLINE" / trust-anchor
+        // errors). Give the first ping of the day room to complete.
         val okHttpClient = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
+            .connectTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
             .build()
 
         val moshi = Moshi.Builder()

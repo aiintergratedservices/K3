@@ -1,0 +1,40 @@
+# Keeps Kortana's free Render server from spinning down.
+#
+# Render's free tier sleeps after ~15 minutes with no inbound traffic, and a
+# cold start takes ~50s — long enough that the phone app's ping times out and
+# shows OFFLINE. This pings her /health endpoint on a schedule so she stays
+# warm 24/7. Free, no card, no extra service to sign up for.
+#
+# Each run pings twice, 5 minutes apart, so traffic keeps flowing even when
+# GitHub delays the scheduled run (it often does under load). Between the two
+# pings and the 10-minute schedule, she never hits the 15-minute idle window.
+#
+# Set the repo variable KORTANA_URL (Settings -> Secrets and variables ->
+# Actions -> Variables) if her URL ever changes. Defaults to the current one.
+name: keep-kortana-awake
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 minutes (GitHub may delay a few min)
+  workflow_dispatch: {}       # lets you wake her manually from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health (twice, 5 min apart)
+        env:
+          KORTANA_URL: ${{ vars.KORTANA_URL || 'https://k3-6pwr.onrender.com' }}
+        run: |
+          ping() {
+            # --max-time 90 tolerates a cold start; retry once on transient fail.
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 90 \
+                   --retry 1 --retry-delay 10 "$KORTANA_URL/health" || echo "000")
+            echo "$(date -u +%H:%M:%S) -> $KORTANA_URL/health : $code"
+            # Any HTTP response (even 404) means she's awake; only a total
+            # failure (000) is a problem worth flagging.
+            [ "$code" != "000" ]
+          }
+          ping || echo "first ping failed (cold start?) — continuing"
+          sleep 300
+          ping || echo "second ping failed — she may be down"
