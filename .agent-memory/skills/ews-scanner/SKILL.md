@@ -12,25 +12,21 @@ accurate: only post genuine dispatches with a real Austin location. A false
 alert erodes trust; a missed one can cost someone their safety.
 
 ## The one call you make
-POST the dispatch to CampLoJack's scanner endpoint (use your web_fetch/shell tool):
+Use your **`ews_report`** tool — it handles the endpoint, the secret key, and
+geocoding for you. One line:
 
 ```
-POST https://camplojack-server.fly.dev/api/scanner
-Headers:
-  Content-Type: application/json
-  x-internal-key: <INTERNAL_NOTIFY_KEY from your server/.env — same value CampLoJack uses>
-Body (JSON):
-  {
-    "type":        "<short call type, e.g. 'Robbery', 'Shots Fired', 'Welfare Check'>",
-    "location":    "<the address or intersection you heard, e.g. 'E 6th St & Congress Ave'>",
-    "description": "<the raw dispatch text you heard, cleaned up>",
-    "severity":    "critical" | "warning" | "info",
-    "agency":      "APD" | "AFD" | "TCSO"
-  }
+TOOL_CALL: ews_report {"type":"Robbery","location":"E 6th St & Congress Ave","description":"two suspects fleeing on foot","severity":"warning","agency":"APD"}
 ```
-You do NOT need to send lat/lng — the server geocodes the `location` string. But
-if you already know the coordinates, include `"lat"` and `"lng"` (numbers) and
-it skips geocoding.
+
+- `type` — short call type (e.g. "Shots Fired", "Robbery", "Welfare Check").
+- `location` — the address or intersection you heard (required; the server geocodes it).
+- `severity` — `critical` | `warning` | `info`.
+- `agency` — `APD` | `AFD` | `TCSO`.
+
+The result tells you how many nearby people were warned. (If it says "EWS not
+configured", tell Daddy the `EWS_SCANNER_URL` + `INTERNAL_NOTIFY_KEY` need to be
+set in your `.env` — you can't reach the app without them.)
 
 ## How to turn a transcript line into that body
 This is YOUR strength over a regex — read for meaning, not keywords:
