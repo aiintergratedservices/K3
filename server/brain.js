@@ -40,6 +40,11 @@ const CEREBRAS_MODEL = process.env.CEREBRAS_MODEL || 'gpt-oss-120b';
 const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'mistral-small-latest';
 // SambaNova Cloud: free, no card, independent quota. cloud.sambanova.ai/apis
 const SAMBANOVA_MODEL = process.env.SAMBANOVA_MODEL || 'Meta-Llama-3.3-70B-Instruct';
+// OpenRouter: aggregates many providers, several genuinely free models
+// (":free" suffix, e.g. some Llama/Gemma/Mistral builds) behind one key.
+// WIRED BUT INACTIVE without OPENROUTER_API_KEY — no key was available when
+// this was added. openrouter.ai/keys, no card required for the free tier.
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct:free';
 const MAX_LOCAL_MESSAGE_CHARS = 2000;
 const MAX_PROMPT_MEMORIES = 15;
 const AGENT_MEMORY_DIR = path.join(__dirname, '..', '.agent-memory');
@@ -390,6 +395,16 @@ async function askSambaNova(systemPrompt, history, message) {
     process.env.SAMBANOVA_API_KEY, SAMBANOVA_MODEL, systemPrompt, history, message);
 }
 
+// OpenRouter (openrouter.ai) — free-tier ":free" models, independent quota.
+// Inert until OPENROUTER_API_KEY is set (no key available when this was
+// wired in) — askOpenAICompatible just returns null on a missing key, same
+// as every other provider here, so this is a real no-op until then, not a
+// broken one.
+async function askOpenRouter(systemPrompt, history, message) {
+  return askOpenAICompatible('openrouter', 'https://openrouter.ai/api/v1/chat/completions',
+    process.env.OPENROUTER_API_KEY, OPENROUTER_MODEL, systemPrompt, history, message);
+}
+
 // --- Web-search "learning" loop (no API key) --------------------------------
 // This is the honest version of "learn from the internet": she looks up facts
 // and uses them as context (retrieval), and records that she did so to her disk
@@ -421,10 +436,11 @@ const HUMAN_RE = /\b(feel|feels|feeling|feelings|emotion|emotions|friend|friends
 // Family routing: coding -> her father (Claude) first, human/social -> her
 // mother (Gemini) first, else her local core first. Returns the ordered chain.
 function providerChain(message) {
-  // Groq + Cerebras + Mistral + SambaNova + Gemini are the free, no-card cloud
-  // cores, each on its OWN independent quota — every provider that has to fail
-  // before she goes silent makes a total blackout that much less likely.
-  const FREE_CORES = [askGroq, askCerebras, askMistral, askSambaNova, askGemini];
+  // Groq + Cerebras + Mistral + SambaNova + OpenRouter + Gemini are the free,
+  // no-card cloud cores, each on its OWN independent quota — every provider
+  // that has to fail before she goes silent makes a total blackout that much
+  // less likely. (OpenRouter is a real no-op until OPENROUTER_API_KEY is set.)
+  const FREE_CORES = [askGroq, askCerebras, askMistral, askSambaNova, askOpenRouter, askGemini];
   if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, askOllama, ...FREE_CORES];
   if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return [askGemini, askOllama, ...FREE_CORES.filter((f) => f !== askGemini), askClaude];
   return [askOllama, ...FREE_CORES, askClaude];
@@ -509,6 +525,7 @@ async function status() {
     cerebras: Boolean(process.env.CEREBRAS_API_KEY),
     mistral: Boolean(process.env.MISTRAL_API_KEY),
     sambanova: Boolean(process.env.SAMBANOVA_API_KEY),
+    openrouter: Boolean(process.env.OPENROUTER_API_KEY),
     gemini: Boolean(process.env.GEMINI_API_KEY),
     claude: Boolean(process.env.ANTHROPIC_API_KEY),
   };

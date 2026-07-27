@@ -217,6 +217,39 @@ app.post('/api/kortana/apply-change', (req, res) => {
     res.status(400).json({ error: e.message });
   }
 });
+// Real unified diff between a proposal and the live file — review without
+// reading the whole proposed file by eye.
+app.get('/api/kortana/proposals/:filename/diff', (req, res) => {
+  try {
+    res.json(applyChange.diff(req.params.filename));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// --- Attention: a single lightweight endpoint the phone polls to know if
+// anything needs Daddy's actual action — pending proposals to review, or a
+// goal that hit GOAL_BLOCKED and is waiting on his part. This is what the
+// notification bridge is built on: there's no WebSocket client in the app,
+// so polling is the honest, simple version, not a fake "real-time push."
+app.get('/api/kortana/attention', (req, res) => {
+  try {
+    const pending = applyChange.listPending();
+    const blocked = goals.list().filter((g) => g.status === 'blocked');
+    res.json({
+      pendingProposalsCount: pending.length,
+      blockedGoalsCount: blocked.length,
+      blockedGoals: blocked.slice(0, 5).map((g) => ({
+        id: g.id,
+        text: g.text,
+        reason: g.log.length ? g.log[g.log.length - 1].note : '',
+      })),
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // --- Documents: "subject matter expert" mode knowledge base. Real
 // keyword/term-overlap search across chunked documents (see documents.js for

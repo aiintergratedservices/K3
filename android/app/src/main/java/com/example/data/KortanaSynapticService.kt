@@ -17,6 +17,7 @@ class KortanaSynapticService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var synapticJob: Job? = null
+    private var attentionJob: Job? = null
     private lateinit var repository: KortanaRepository
 
     companion object {
@@ -56,6 +57,26 @@ class KortanaSynapticService : Service() {
             )
         }
         startSynapticAutonomousLoop()
+        startAttentionLoop()
+    }
+
+    // The notification bridge — independent of the proactiveAutonomy toggle
+    // above (checking for things that need Daddy's attention isn't a "chat
+    // whisper," it should run regardless). Fixed 15-minute cadence, cheap
+    // enough not to need a user-facing setting.
+    private fun startAttentionLoop() {
+        attentionJob?.cancel()
+        attentionJob = serviceScope.launch {
+            while (isActive) {
+                try {
+                    val s = repository.stateFlow.firstOrNull() ?: repository.getOrCreateState()
+                    KortanaAttention.check(applicationContext, s.cloudServerUrl, s.cloudApiKey)
+                } catch (e: Exception) {
+                    Log.w(TAG, "attention loop error: ${e.message}")
+                }
+                delay(15 * 60 * 1000L)
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -136,6 +157,7 @@ class KortanaSynapticService : Service() {
 
     override fun onDestroy() {
         synapticJob?.cancel()
+        attentionJob?.cancel()
         serviceScope.cancel()
         super.onDestroy()
     }
