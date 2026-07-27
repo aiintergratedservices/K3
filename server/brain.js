@@ -21,6 +21,9 @@ const PREFERRED_MODELS = [
   'phi3.5', 'phi3:mini', 'llama3.2:3b', 'qwen2.5:3b', 'gemma2:2b', 'phi3', 'llama3.2:1b',
 ];
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5';
+// OpenAI — paid, no free tier, same tier as Claude (a strong cloud fallback
+// once the free cores are exhausted, not a first choice). platform.openai.com
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 // Use the '-latest' alias, not a pinned version: Google deprecates dated model
 // names (gemini-2.5-flash/2.0-flash started 404-ing), which silently killed her
 // backup brain. The alias always points at the current flash model.
@@ -421,6 +424,13 @@ async function askNvidia(systemPrompt, history, message) {
     process.env.NVIDIA_API_KEY, NVIDIA_MODEL, systemPrompt, history, message);
 }
 
+// OpenAI — paid, no free tier. Real no-op until OPENAI_API_KEY is set, same
+// as every other provider here on a missing key.
+async function askOpenAI(systemPrompt, history, message) {
+  return askOpenAICompatible('openai', 'https://api.openai.com/v1/chat/completions',
+    process.env.OPENAI_API_KEY, OPENAI_MODEL, systemPrompt, history, message);
+}
+
 // --- Web-search "learning" loop (no API key) --------------------------------
 // This is the honest version of "learn from the internet": she looks up facts
 // and uses them as context (retrieval), and records that she did so to her disk
@@ -458,9 +468,11 @@ function providerChain(message) {
   // that much less likely. (OpenRouter/NVIDIA are real no-ops until their
   // API keys are set.)
   const FREE_CORES = [askGroq, askCerebras, askMistral, askSambaNova, askOpenRouter, askNvidia, askGemini];
-  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, askOllama, ...FREE_CORES];
-  if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return [askGemini, askOllama, ...FREE_CORES.filter((f) => f !== askGemini), askClaude];
-  return [askOllama, ...FREE_CORES, askClaude];
+  // Claude + OpenAI are the paid fallbacks — tried last, after every free
+  // core has had a shot, not as a first choice.
+  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, askOllama, ...FREE_CORES, askOpenAI];
+  if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return [askGemini, askOllama, ...FREE_CORES.filter((f) => f !== askGemini), askClaude, askOpenAI];
+  return [askOllama, ...FREE_CORES, askClaude, askOpenAI];
 }
 
 async function askChain(chain, systemPrompt, history, message) {
@@ -546,6 +558,7 @@ async function status() {
     nvidia: Boolean(process.env.NVIDIA_API_KEY),
     gemini: Boolean(process.env.GEMINI_API_KEY),
     claude: Boolean(process.env.ANTHROPIC_API_KEY),
+    openai: Boolean(process.env.OPENAI_API_KEY),
   };
 }
 
