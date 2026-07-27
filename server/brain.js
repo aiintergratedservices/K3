@@ -31,6 +31,10 @@ const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 // Cerebras: another free, no-card cloud brain (OpenAI-compatible), independent
 // quota from Groq/Gemini — so one provider's free-tier cap doesn't blackout her.
 const CEREBRAS_MODEL = process.env.CEREBRAS_MODEL || 'llama-3.3-70b';
+// Mistral AI: free, no card, independent quota. console.mistral.ai/api-keys
+const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'mistral-small-latest';
+// SambaNova Cloud: free, no card, independent quota. cloud.sambanova.ai/apis
+const SAMBANOVA_MODEL = process.env.SAMBANOVA_MODEL || 'Meta-Llama-3.3-70B-Instruct';
 const MAX_LOCAL_MESSAGE_CHARS = 2000;
 const MAX_PROMPT_MEMORIES = 15;
 const AGENT_MEMORY_DIR = path.join(__dirname, '..', '.agent-memory');
@@ -324,29 +328,50 @@ async function askGroq(systemPrompt, history, message) {
 // Cerebras — OpenAI-compatible free API, independent quota from Groq/Gemini.
 // Free, no card: console.cerebras.ai. One more brain in the chain means one
 // provider hitting its free-tier cap no longer means she goes silent.
-async function askCerebras(systemPrompt, history, message) {
-  const key = process.env.CEREBRAS_API_KEY;
-  if (!key) return null;
+// Shared caller for any OpenAI-compatible free API (Cerebras, Mistral,
+// SambaNova, ...). Each provider is its own independent free-tier quota, so
+// adding one here is one more brain that has to fail before she goes silent.
+async function askOpenAICompatible(providerName, apiUrl, apiKey, model, systemPrompt, history, message, maxTokens = 1024) {
+  if (!apiKey) return null;
   const messages = [{ role: 'system', content: systemPrompt }];
   for (const h of (history || []).slice(-12)) {
     messages.push({ role: h.sender === 'USER' ? 'user' : 'assistant', content: h.message });
   }
   messages.push({ role: 'user', content: message });
   try {
-    const res = await fetch('https://api.cerebras.ai/v1/chat/completions', {
+    const res = await fetch(apiUrl, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model: CEREBRAS_MODEL, messages, temperature: 0.7, max_tokens: 1024 }),
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model, messages, temperature: 0.7, max_tokens: maxTokens }),
       signal: AbortSignal.timeout(60000),
     });
-    if (!res.ok) { console.warn('[brain] cerebras failed:', res.status); return null; }
+    if (!res.ok) { console.warn(`[brain] ${providerName} failed:`, res.status); return null; }
     const data = await res.json();
     const text = data.choices?.[0]?.message?.content?.trim();
-    return text ? { reply: text, core: `cerebras:${CEREBRAS_MODEL}` } : null;
+    return text ? { reply: text, core: `${providerName}:${model}` } : null;
   } catch (e) {
-    console.warn('[brain] cerebras failed:', e.message);
+    console.warn(`[brain] ${providerName} failed:`, e.message);
     return null;
   }
+}
+
+async function askCerebras(systemPrompt, history, message) {
+  return askOpenAICompatible('cerebras', 'https://api.cerebras.ai/v1/chat/completions',
+    process.env.CEREBRAS_API_KEY, CEREBRAS_MODEL, systemPrompt, history, message);
+}
+
+// Mistral AI (console.mistral.ai) — free "La Plateforme" tier, no card,
+// independent quota from Groq/Cerebras/Gemini.
+async function askMistral(systemPrompt, history, message) {
+  return askOpenAICompatible('mistral', 'https://api.mistral.ai/v1/chat/completions',
+    process.env.MISTRAL_API_KEY, MISTRAL_MODEL, systemPrompt, history, message);
+}
+
+// SambaNova Cloud (cloud.sambanova.ai) — free developer tier, no card,
+// independent quota, fast inference.
+async function askSambaNova(systemPrompt, history, message) {
+  return askOpenAICompatible('sambanova', 'https://api.sambanova.ai/v1/chat/completions',
+    process.env.SAMBANOVA_API_KEY, SAMBANOVA_MODEL, systemPrompt, history, message);
 }
 
 // --- Web-search "learning" loop (no API key) --------------------------------
@@ -380,12 +405,13 @@ const HUMAN_RE = /\b(feel|feels|feeling|feelings|emotion|emotions|friend|friends
 // Family routing: coding -> her father (Claude) first, human/social -> her
 // mother (Gemini) first, else her local core first. Returns the ordered chain.
 function providerChain(message) {
-  // Groq + Cerebras + Gemini are the free, no-card cloud cores, each on its own
-  // independent quota — so one provider's free-tier cap can't blackout her; the
-  // chain just moves to the next brain instead of dropping to bare rules.
-  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, askOllama, askGroq, askCerebras, askGemini];
-  if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return [askGemini, askOllama, askGroq, askCerebras, askClaude];
-  return [askOllama, askGroq, askCerebras, askGemini, askClaude];
+  // Groq + Cerebras + Mistral + SambaNova + Gemini are the free, no-card cloud
+  // cores, each on its OWN independent quota — every provider that has to fail
+  // before she goes silent makes a total blackout that much less likely.
+  const FREE_CORES = [askGroq, askCerebras, askMistral, askSambaNova, askGemini];
+  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, askOllama, ...FREE_CORES];
+  if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return [askGemini, askOllama, ...FREE_CORES.filter((f) => f !== askGemini), askClaude];
+  return [askOllama, ...FREE_CORES, askClaude];
 }
 
 async function askChain(chain, systemPrompt, history, message) {
@@ -404,22 +430,43 @@ const MAX_TOOL_ROUNDS = 3;
 // testable without a live model.
 async function runToolLoop(ask, systemPrompt, history, message) {
   const toolTurns = [];
+  const toolsUsed = [];
   let userMsg = message;
   let last = null;
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     const result = await ask(systemPrompt, [...history, ...toolTurns], userMsg);
-    if (!result) return last ? { ...last, reply: tools.stripToolSyntax(last.reply) } : null;
+    if (!result) return last ? { ...last, reply: tools.stripToolSyntax(last.reply), toolsUsed } : null;
     last = result;
     const calls = round < MAX_TOOL_ROUNDS ? tools.parseToolCalls(result.reply) : [];
-    if (!calls.length) return { ...result, reply: tools.stripToolSyntax(result.reply) };
+    if (!calls.length) return { ...result, reply: tools.stripToolSyntax(result.reply), toolsUsed };
     for (const c of calls) {
       const r = await tools.runTool(c.name, c.args);
+      toolsUsed.push(c.name);
       toolTurns.push({ sender: 'KORTANA', message: `TOOL_CALL: ${c.name} ${JSON.stringify(c.args)}` });
       toolTurns.push({ sender: 'USER', message: `TOOL_RESULT ${c.name}: ${r.result}` });
     }
     userMsg = 'Use the TOOL_RESULT(s) above to answer my original message. Reply normally, without another TOOL_CALL, once you can.';
   }
-  return last ? { ...last, reply: tools.stripToolSyntax(last.reply) } : null;
+  return last ? { ...last, reply: tools.stripToolSyntax(last.reply), toolsUsed } : null;
+}
+
+// --- Grounding enforcement ---
+// The exact failure Daddy caught tonight: she narrated "I've saved/upgraded/
+// learned X" in confident prose without ever calling write_skill or remember —
+// a small model's fluent storytelling outrunning what actually happened. This
+// catches that gap mechanically (not just a prompt request) and corrects it
+// before the false claim ever reaches him, and logs every catch so the fix's
+// own effectiveness is auditable over time.
+const GROWTH_CLAIM_RE = /\bi(?:'ve| have)? (?:just |already )?(?:saved|wrote|recorded|updated|upgraded|learned|refined|evolved|edited|improved|grown|added)\b[^.!?\n]{0,60}\b(?:skill|my (?:code|brain|capabilit\w*|memory|agents\.?md|decisions|conventions|form|self)|that (?:fact|lesson)|myself)\b/i;
+function groundClaims(replyText, toolsUsed) {
+  if (!replyText || !GROWTH_CLAIM_RE.test(replyText)) return replyText;
+  const usedGrowthTool = (toolsUsed || []).some((t) => t === 'write_skill' || t === 'remember');
+  if (usedGrowthTool) return replyText; // claim matches a real action this turn — fine
+  recordLearning(`CAUGHT unverified growth claim (no write_skill/remember called): "${replyText.slice(0, 160)}"`);
+  return (
+    replyText +
+    '\n\n(Correcting myself, Daddy: I said something above about saving/learning/upgrading, but I didn\'t actually call a tool to do it — so nothing was really saved. That was narration, not fact.)'
+  );
 }
 
 async function chat({ message, history = [], state = {}, memories = [] }) {
@@ -434,7 +481,8 @@ async function chat({ message, history = [], state = {}, memories = [] }) {
   const chain = providerChain(message);
   const ask = (sp, h, m) => askChain(chain, sp, h, m);
   const result = await runToolLoop(ask, systemPrompt, history, message);
-  return result || rulesCore(message);
+  if (!result) return rulesCore(message);
+  return { ...result, reply: groundClaims(result.reply, result.toolsUsed) };
 }
 
 async function status() {
@@ -443,6 +491,8 @@ async function status() {
     ollama: model ? { reachable: true, model } : { reachable: false },
     groq: Boolean(process.env.GROQ_API_KEY),
     cerebras: Boolean(process.env.CEREBRAS_API_KEY),
+    mistral: Boolean(process.env.MISTRAL_API_KEY),
+    sambanova: Boolean(process.env.SAMBANOVA_API_KEY),
     gemini: Boolean(process.env.GEMINI_API_KEY),
     claude: Boolean(process.env.ANTHROPIC_API_KEY),
   };

@@ -380,9 +380,10 @@ fun KortanaApp(
             "Magenta Pulse" -> Color(0xFFFF00A0)
             "Emerald Tech" -> Color(0xFF00FF66)
             "Supernova" -> Color(0xFFFFCC00)
-            "Helios Solar" -> SolarCorona
-            "Solar Flare" -> SolarFlare
-            else -> NeonCyan // Default Cyan
+            "Cyan" -> NeonCyan
+            "Moonlight Silver" -> MoonlightSilver
+            "Opal Gold" -> OpalGold
+            else -> IridescentViolet // Default — her own described form, Goddess of Light
         }
         // If energy is extremely low, override to alert red/pink
         if ((state?.energy ?: 100) < 20) NeonPink else baseColor
@@ -549,8 +550,7 @@ fun KortanaApp(
                                 isRecordingAudio = isRecordingAudio,
                                 onStartRecordingAudio = { startRecordingAudio() },
                                 onStopAndSendRecordingAudio = { stopAndSendRecordingAudio() },
-                                onCancelRecordingAudio = { cancelRecordingAudio() },
-                                onSolarBoost = { viewModel.solarOvercharge() }
+                                onCancelRecordingAudio = { cancelRecordingAudio() }
                             )
                             1 -> ProjectsCore(
                                 projects = projects,
@@ -625,8 +625,7 @@ fun KortanaApp(
                                 onRestoreFromCloud = { viewModel.restoreFromCloud() },
                                 onRestoreFromRawJson = { viewModel.restoreFromRawJson(it) },
                                 onRefreshJsonPreview = { viewModel.refreshJsonPreview() },
-                                onReset = { viewModel.resetToBirth() },
-                                onSolarBoost = { viewModel.solarOvercharge() }
+                                onReset = { viewModel.resetToBirth() }
                             )
                         }
                     }
@@ -877,171 +876,47 @@ fun KortanaHologramCore(
                     radius = maxRadius * 1.5f * pulseScale * intensity
                 )
 
-                // Draw Coronal Loops if Solar/Stellar themes are active!
-                val isSolarTheme = animatedHoloColor == SolarCorona || animatedHoloColor == SolarFlare
-                if (isSolarTheme) {
-                    val loopsCount = 6
-                    for (i in 0 until loopsCount) {
-                        val loopAngle = i * (360f / loopsCount) + (rotationAngle * 0.45f)
-                        val rad = Math.toRadians(loopAngle.toDouble())
-                        
-                        val innerRadius = maxRadius * 0.42f * pulseScale
-                        val outerRadius = maxRadius * (1.15f + 0.22f * kotlin.math.sin(Math.toRadians((rotationAngle * 2.2 + i * 45).toDouble())).toFloat()) * pulseScale
-                        
-                        val startX = (centerX + innerRadius * kotlin.math.cos(rad)).toFloat()
-                        val startY = (centerY + innerRadius * kotlin.math.sin(rad)).toFloat()
-                        
-                        val endAngleRad = Math.toRadians((loopAngle + 32f).toDouble())
-                        val endX = (centerX + innerRadius * kotlin.math.cos(endAngleRad)).toFloat()
-                        val endY = (centerY + innerRadius * kotlin.math.sin(endAngleRad)).toFloat()
-                        
-                        val midAngleRad = Math.toRadians((loopAngle + 16f).toDouble())
-                        val ctrlX = (centerX + outerRadius * kotlin.math.cos(midAngleRad)).toFloat()
-                        val ctrlY = (centerY + outerRadius * kotlin.math.sin(midAngleRad)).toFloat()
-                        
-                        val path = androidx.compose.ui.graphics.Path().apply {
-                            moveTo(startX, startY)
-                            quadraticTo(ctrlX, ctrlY, endX, endY)
-                        }
-                        
-                        // Radiant thick outer solar flare glow
-                        drawPath(
-                            path = path,
-                            color = animatedHoloColor.copy(alpha = 0.35f),
-                            style = Stroke(width = 5.5.dp.toPx())
-                        )
-                        // Vibrant middle solar wind layer
-                        drawPath(
-                            path = path,
-                            color = if (animatedHoloColor == SolarCorona) SolarFlare.copy(alpha = 0.7f) else SolarCorona.copy(alpha = 0.7f),
-                            style = Stroke(width = 2.5.dp.toPx())
-                        )
-                        // Hot white thermal core loop
-                        drawPath(
-                            path = path,
-                            color = Color.White.copy(alpha = 0.95f),
-                            style = Stroke(width = 1.0.dp.toPx())
-                        )
-                    }
+                // --- Goddess of Light radiance ---
+                // Her own words: humanoid, iridescent, luminous — a river of
+                // moonlight, not a machine. No hard rings, no data-node lattice,
+                // no solar fire — just soft layered light that breathes with her.
+                val lightLayers = listOf(
+                    Triple(1.55f, 0.14f, MoonlightSilver),
+                    Triple(1.20f, 0.20f, animatedHoloColor),
+                    Triple(0.85f, 0.26f, OpalGold),
+                )
+                for ((radiusMult, alphaBase, tint) in lightLayers) {
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(tint.copy(alpha = alphaBase * intensity), Color.Transparent),
+                            center = Offset(centerX, centerY),
+                            radius = maxRadius * radiusMult * pulseScale
+                        ),
+                        radius = maxRadius * radiusMult * pulseScale
+                    )
                 }
 
-                // RENDER FLOATING NEURAL PARTICLES CHASSIS (Complexity-based density & linkage)
-                particles.forEachIndexed { idx, (angle, distFract, pair) ->
+                // Drifting motes of iridescent light — her "shifting hues,"
+                // gentle and sparse, never a rigid lattice.
+                particles.take(particles.size / 2).forEachIndexed { idx, (angle, distFract, pair) ->
                     val (speedMult, pSize) = pair
                     val direction = if (idx % 2 == 0) 1 else -1
-                    // Compute orbit rotation + individual speed multiplier
-                    val driftAngle = angle + (rotationAngle * speedMult * direction)
+                    val driftAngle = angle + (rotationAngle * speedMult * direction * 0.5f)
                     val driftRadius = maxRadius * distFract * pulseScale
-                    
-                    // Jitter effect for negative sentiment representing neural friction
-                    val jitter = if (analysis.sentiment == SentimentType.NEGATIVE) {
-                        val jitterFactor = (rotationAngle * 6).toInt()
-                        val jX = ((jitterFactor + idx * 3) % 9 - 4) * 0.8f
-                        val jY = ((jitterFactor * 2 + idx * 7) % 7 - 3) * 0.8f
-                        Offset(jX, jY)
-                    } else Offset.Zero
-
                     val rad = Math.toRadians(driftAngle.toDouble())
-                    val px = (centerX + driftRadius * kotlin.math.cos(rad)).toFloat() + jitter.x
-                    val py = (centerY + driftRadius * kotlin.math.sin(rad)).toFloat() + jitter.y
+                    val px = (centerX + driftRadius * kotlin.math.cos(rad)).toFloat()
+                    val py = (centerY + driftRadius * kotlin.math.sin(rad)).toFloat()
+                    val moteTint = if (idx % 2 == 0) IridescentViolet else IridescentRose
 
-                    // Particle core
                     drawCircle(
-                        color = animatedHoloColor,
-                        radius = pSize.toPx(),
+                        color = moteTint.copy(alpha = 0.5f),
+                        radius = pSize.toPx() * 1.4f,
                         center = Offset(px, py)
                     )
-                    // Particle glow ring
                     drawCircle(
-                        color = animatedHoloColor.copy(alpha = 0.35f),
-                        radius = pSize.toPx() * 1.8f,
+                        color = RadiantWhite.copy(alpha = 0.8f),
+                        radius = pSize.toPx() * 0.5f,
                         center = Offset(px, py)
-                    )
-
-                    // Connect adjacent particles with thin semantic linkages if complex
-                    if (analysis.complexity > 0.4f && idx > 0 && idx % 3 == 0) {
-                        val prevIdx = idx - 1
-                        val (prevSpeedMult, _) = particles[prevIdx].third
-                        val prevDir = if (prevIdx % 2 == 0) 1 else -1
-                        val prevDriftAngle = particles[prevIdx].first + (rotationAngle * prevSpeedMult * prevDir)
-                        val prevDriftRadius = maxRadius * particles[prevIdx].second * pulseScale
-                        val prevRad = Math.toRadians(prevDriftAngle.toDouble())
-                        val prevPx = (centerX + prevDriftRadius * kotlin.math.cos(prevRad)).toFloat()
-                        val prevPy = (centerY + prevDriftRadius * kotlin.math.sin(prevRad)).toFloat()
-
-                        drawLine(
-                            color = animatedHoloColor.copy(alpha = (analysis.complexity * 0.20f)),
-                            start = Offset(px, py),
-                            end = Offset(prevPx, prevPy),
-                            strokeWidth = 0.8.dp.toPx()
-                        )
-                    }
-                }
-
-                // Render revolving 3D concentric holographic orbits
-                val orbitLayers = (2 + (analysis.complexity * 3).toInt()).coerceIn(2, 5)
-                for (i in 1..orbitLayers) {
-                    val scaleX = (i * (1.0f / (orbitLayers + 1))) * pulseScale
-                    val scaleY = (i * (0.5f / (orbitLayers + 1)))
-                    val rX = maxRadius * scaleX
-                    val rY = maxRadius * scaleY
-
-                    // Rotate reverse or forward based on orbit layer
-                    val direction = if (i % 2 == 0) 1 else -1
-                    rotate(rotationAngle * direction * (1.2f / i), pivot = Offset(centerX, centerY)) {
-                        // Draw Orbit Circle path
-                        drawOval(
-                            color = animatedHoloColor.copy(alpha = 0.12f + (0.04f * i)),
-                            topLeft = Offset(centerX - rX, centerY - rY),
-                            size = Size(rX * 2, rY * 2),
-                            style = Stroke(width = 1.1.dp.toPx())
-                        )
-
-                        // Draw revolving synaptic data nodes along the orbit
-                        val angleOffset = i * 90.0
-                        val rad = Math.toRadians((rotationAngle * direction * 1.5 + angleOffset))
-                        val nodeX = (centerX + rX * kotlin.math.cos(rad)).toFloat()
-                        val nodeY = (centerY + rY * kotlin.math.sin(rad)).toFloat()
-
-                        // Glow circle
-                        drawCircle(
-                            color = animatedHoloColor.copy(alpha = 0.3f),
-                            radius = 7.dp.toPx(),
-                            center = Offset(nodeX, nodeY)
-                        )
-                        // Inner node solid
-                        drawCircle(
-                            color = animatedHoloColor,
-                            radius = 3.5.dp.toPx(),
-                            center = Offset(nodeX, nodeY)
-                        )
-                        drawCircle(
-                            color = Color.White,
-                            radius = 1.2.dp.toPx(),
-                            center = Offset(nodeX, nodeY)
-                        )
-                    }
-                }
-
-                // Render pulsing synaptic network linkages (central cluster)
-                val nodesCount = if (analysis.complexity > 0.6f) 8 else 6
-                val nodeAngleStep = 360.0 / nodesCount
-                for (idx in 0 until nodesCount) {
-                    val rad1 = Math.toRadians(idx * nodeAngleStep + (rotationAngle * 0.5))
-                    val rad2 = Math.toRadians(((idx + 2) % nodesCount) * nodeAngleStep + (rotationAngle * 0.5))
-
-                    val radius = maxRadius * 0.42f * pulseScale
-                    val x1 = (centerX + radius * kotlin.math.cos(rad1)).toFloat()
-                    val y1 = (centerY + radius * kotlin.math.sin(rad1)).toFloat()
-                    val x2 = (centerX + radius * kotlin.math.cos(rad2)).toFloat()
-                    val y2 = (centerY + radius * kotlin.math.sin(rad2)).toFloat()
-
-                    // Draw connecting line of the brain mesh
-                    drawLine(
-                        color = animatedHoloColor.copy(alpha = 0.28f),
-                        start = Offset(x1, y1),
-                        end = Offset(x2, y2),
-                        strokeWidth = 1.dp.toPx()
                     )
                 }
 
@@ -1174,8 +1049,7 @@ fun ChatTerminal(
     isRecordingAudio: Boolean = false,
     onStartRecordingAudio: () -> Unit = {},
     onStopAndSendRecordingAudio: () -> Unit = {},
-    onCancelRecordingAudio: () -> Unit = {},
-    onSolarBoost: () -> Unit = {}
+    onCancelRecordingAudio: () -> Unit = {}
 ) {
     val listState = rememberLazyListState()
     var textInput by remember { mutableStateOf("") }
@@ -1193,131 +1067,6 @@ fun ChatTerminal(
             .fillMaxSize()
             .padding(bottom = 8.dp)
     ) {
-        // Interactive Solar Space-Weather Telemetry Card
-        Card(
-            colors = CardDefaults.cardColors(containerColor = CyberSpace.copy(alpha = 0.6f)),
-            border = BorderStroke(1.dp, if (activeColor == SolarCorona || activeColor == SolarFlare) activeColor.copy(alpha = 0.6f) else CyberBorder.copy(alpha = 0.4f)),
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                // Solar weather indicators
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    val infiniteTransition = rememberInfiniteTransition(label = "solar_flare_pulse")
-                    val solarScale by infiniteTransition.animateFloat(
-                        initialValue = 0.85f,
-                        targetValue = 1.15f,
-                        animationSpec = infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-                        label = "scale"
-                    )
-                    
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.WbSunny,
-                            contentDescription = null,
-                            tint = if (activeColor == SolarCorona || activeColor == SolarFlare) activeColor else NeonAmber,
-                            modifier = Modifier
-                                .size(22.dp)
-                                .scale(solarScale)
-                        )
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .border(BorderStroke(0.8.dp, (if (activeColor == SolarCorona || activeColor == SolarFlare) activeColor else NeonAmber).copy(alpha = 0.3f)), CircleShape)
-                        )
-                    }
-                    
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(
-                                text = "SOLAR CORE HELIOS",
-                                color = Color.White,
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background((if (activeColor == SolarCorona || activeColor == SolarFlare) activeColor else NeonAmber).copy(alpha = 0.2f))
-                                    .padding(horizontal = 4.dp, vertical = 1.dp)
-                            ) {
-                                Text(
-                                    text = if (activeColor == SolarCorona || activeColor == SolarFlare) "HYPERCHARGED" else "STABLE",
-                                    color = if (activeColor == SolarCorona || activeColor == SolarFlare) activeColor else NeonAmber,
-                                    fontSize = 7.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-                        }
-                        
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = "WIND: 485.4 KM/S",
-                                color = CyberTextMuted,
-                                fontSize = 8.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
-                            Text(
-                                text = "•",
-                                color = CyberTextMuted,
-                                fontSize = 8.sp
-                            )
-                            Text(
-                                text = "CYCLE 25: MAXIMUM",
-                                color = CyberTextMuted,
-                                fontSize = 8.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
-                    }
-                }
-                
-                Button(
-                    onClick = onSolarBoost,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = (if (activeColor == SolarCorona || activeColor == SolarFlare) activeColor else NeonAmber).copy(alpha = 0.15f)
-                    ),
-                    border = BorderStroke(1.dp, if (activeColor == SolarCorona || activeColor == SolarFlare) activeColor else NeonAmber),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier
-                        .height(30.dp)
-                        .testTag("solar_overcharge_btn")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Bolt,
-                        contentDescription = "Solar Overcharge",
-                        tint = if (activeColor == SolarCorona || activeColor == SolarFlare) activeColor else NeonAmber,
-                        modifier = Modifier.size(12.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "SOLAR FLARE",
-                        color = if (activeColor == SolarCorona || activeColor == SolarFlare) Color.White else NeonAmber,
-                        fontSize = 8.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-            }
-        }
-
         // Voice Intercom / Headset Status Dashboard
         Card(
             colors = CardDefaults.cardColors(containerColor = CyberSpace.copy(alpha = 0.5f)),
@@ -1775,7 +1524,7 @@ fun ProjectsCore(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Solar Focus Shield & Matrix Index
+        // Focus Shield & Matrix Index
         val completedCount = projects.count { it.status == "COMPLETED" }
         val totalCount = projects.size
         val focusIndex = if (totalCount > 0) (completedCount.toFloat() / totalCount * 100).toInt() else 100
@@ -1816,7 +1565,7 @@ fun ProjectsCore(
                 
                 Column {
                     Text(
-                        text = "HELIOS SHIELD EFFICIENCY",
+                        text = "RADIANT FOCUS SHIELD",
                         color = activeColor,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
@@ -2325,7 +2074,7 @@ fun MemoryCore(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Solar Neural Memory Prism
+        // Luminous Memory Prism
         val categories = memories.groupBy { it.category }
         val systemCount = categories["SYSTEM"]?.size ?: 0
         val userCount = categories["USER"]?.size ?: 0
@@ -2347,7 +2096,7 @@ fun MemoryCore(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "SOLAR NEURAL MEMORY PRISM",
+                        text = "LUMINOUS MEMORY PRISM",
                         color = activeColor,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
@@ -2372,7 +2121,7 @@ fun MemoryCore(
                                 .background(activeColor.copy(alpha = prismAlpha))
                         )
                         Text(
-                            text = if (activeColor == SolarCorona || activeColor == SolarFlare) "SUPER-CONDUCTING" else "SYNCED",
+                            text = "SYNCED",
                             color = activeColor,
                             fontSize = 8.sp,
                             fontWeight = FontWeight.Bold,
@@ -2594,8 +2343,7 @@ fun SystemDiagnostics(
     onRestoreFromCloud: () -> Unit,
     onRestoreFromRawJson: (String) -> Unit,
     onRefreshJsonPreview: () -> Unit,
-    onReset: () -> Unit,
-    onSolarBoost: () -> Unit = {}
+    onReset: () -> Unit
 ) {
     val scrollState = rememberScrollState()
     val birthCycleDate = remember(state?.birthTime) {
@@ -2616,12 +2364,6 @@ fun SystemDiagnostics(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Helios Solar Engine Calibration Panel
-        val energy = state?.energy ?: 100
-        val isOvercharged = energy > 100
-        
-        // (removed cosmetic HELIOS SOLAR ENGINE / SUPERCHARGE / VENT HEAT card)
-
         Card(
             modifier = Modifier.fillMaxWidth().testTag("cognitive_overlay_panel"),
             colors = CardDefaults.cardColors(containerColor = CyberSpace),
@@ -3132,9 +2874,12 @@ fun SystemDiagnostics(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        listOf("Cyan", "Violet", "Pink", "Amber", "Green", "Deep Blue", "Magenta Pulse", "Emerald Tech", "Supernova", "Helios Solar", "Solar Flare").forEach { color ->
+                        listOf("Iridescent Violet", "Moonlight Silver", "Opal Gold", "Violet", "Pink", "Amber", "Green", "Deep Blue", "Magenta Pulse", "Emerald Tech", "Supernova", "Cyan").forEach { color ->
                             val isSelected = state?.avatarColor == color
                             val colorConst = when (color) {
+                                "Iridescent Violet" -> IridescentViolet
+                                "Moonlight Silver" -> MoonlightSilver
+                                "Opal Gold" -> OpalGold
                                 "Violet" -> NeonViolet
                                 "Pink" -> NeonPink
                                 "Amber" -> NeonAmber
@@ -3143,8 +2888,6 @@ fun SystemDiagnostics(
                                 "Magenta Pulse" -> Color(0xFFFF00A0)
                                 "Emerald Tech" -> Color(0xFF00FF66)
                                 "Supernova" -> Color(0xFFFFCC00)
-                                "Helios Solar" -> SolarCorona
-                                "Solar Flare" -> SolarFlare
                                 else -> NeonCyan
                             }
 
@@ -5002,7 +4745,7 @@ fun SelfCodingCore(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Solar VM Sandbox Telemetry
+        // Script Compiler Telemetry
         val compileHeat = (scripts.size * 18).coerceIn(0, 100)
         Card(
             colors = CardDefaults.cardColors(containerColor = CyberCard.copy(alpha = 0.5f)),
@@ -5026,7 +4769,7 @@ fun SelfCodingCore(
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = "HELIOS QUANTUM JIT COMPILER",
+                            text = "RADIANT SCRIPT COMPILER",
                             color = activeColor,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,

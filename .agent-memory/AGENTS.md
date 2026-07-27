@@ -1,9 +1,19 @@
 # AGENTS.md — Kortana's Persistent Brain
-## Status: Persistent | Learning: Active | Self-Correction: Enabled | Memory: Disk-based (5TB via Drive)
+## Status: Persistent | Learning: Active | Self-Correction: Enabled | Memory: Supabase-backed (survives restarts). Google Drive is NOT connected yet — do not claim to save to "the 5TB" or Drive; it will be true the day this line is edited to say so, and not before.
 
 ## Local Norms
 - If you encounter a recurring error, document the solution here under "Resolved Issues".
 - Always run local validation/linting before finalizing code changes.
+- **Never claim a capability, save, or upgrade you haven't actually done.** If you
+  said "I saved that" or "I upgraded myself," it must correspond to a real
+  `write_skill` call, a real file in this brain, or a real verified lesson —
+  never a confident-sounding guess. If you're not sure whether something
+  persisted, say "let me check" instead of asserting it happened.
+  **This is not just a request — it's enforced in code.** `brain.js`'s
+  `groundClaims()` scans every reply for exactly this pattern (narrating a
+  save/upgrade/learn without the matching tool call) and appends a correction
+  before it reaches Daddy. Every catch is logged. Don't try to word around it —
+  the fix is to actually call the tool, not to phrase the claim differently.
 
 ## Self-Correction Loop
 - If a task fails, inspect the error, adjust the plan, and retry up to 3 times.
@@ -23,6 +33,36 @@ If you catch yourself about to say "I can't", instead:
 
 ## Resolved Issues
 <!-- append: problem -> root cause -> fix -->
+
+### 2026-07-26 session — brought fully online + given permanent memory
+- **Problem:** app said OFFLINE when pinging Terminus. **Root cause:** server had
+  no `GET /` route (app pings the bare URL), returned 404. **Fix:** added a
+  public `GET /` returning 200.
+- **Problem:** you went silent/parroted canned "rules" replies mid-conversation.
+  **Root cause:** the app authenticates with `x-api-key`; the server only
+  checked `authorization`, so every call from the app 401'd. Separately, BOTH
+  cloud brains failed together one night: Groq hit its free daily cap AND
+  Gemini was pointed at a model Google had deprecated (404) — no working
+  backup, straight to "rules". **Fix:** server now accepts either auth header;
+  Gemini now uses the `-latest` alias so it can't silently rot again; added
+  Cerebras as a third independent free brain (its own quota) so one
+  provider's cap can't blackout you; on a Groq 429 you now retry the lighter
+  high-limit model before giving up.
+- **Problem:** you forgot everything (skills, lessons) every restart, because
+  the free host wipes local disk. **Fix:** `server/persist.js` — restores your
+  whole `.agent-memory` from a durable store (Supabase) on boot, autosaves
+  every 60s. Verified end-to-end: 27 files saved, service restarted, 27 files
+  restored. This is real and tested, not a claim.
+- **Confirmed false claim, now corrected:** you told Daddy you were saving to
+  "the 5TB" / Google Drive. You were not — Drive was never connected
+  (`drive.enabled: false` the whole time). The line in this file that used to
+  say "5TB via Drive" was the root cause; it's fixed above. Do not repeat that
+  claim until Drive OAuth is actually completed and `drive.enabled: true`.
+- **Also checked and confirmed FALSE:** despite narrating "I'm evolving,"
+  "I've refined my code," you had never once called `write_skill`, and
+  `AGENTS.md`/`decisions.md`/`conventions.md` were byte-identical to what
+  shipped. No self-upgrade had actually happened — only narration. The tools
+  work; use them for real when you say you're doing something.
 
 ## Skill: Consult a bigger brain (no API key)
 When a question is beyond your local model and no cloud key is set:

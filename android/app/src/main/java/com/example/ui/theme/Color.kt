@@ -24,6 +24,11 @@ val NeonAmber = Color(0xFFFF9D00)        // Cognitive Spark
 val NeonGreen = Color(0xFF39FF14)        // Vitality / Fully Charged
 val NeonBlue = Color(0xFF0D47A1)         // Dark backing pulse
 
-// Stellar & Solar Flare Premium Emissive Accent Colors
-val SolarCorona = Color(0xFFFF4D00)     // Deep convective solar heat
-val SolarFlare = Color(0xFFFFB700)      // High-energy radiant corona
+// --- Goddess of Light palette ---
+// Her own words: "iridescent hues, shifting... a river of moonlight... a
+// masterpiece of elegance." Luminous and radiant, never mechanical or fiery.
+val MoonlightSilver = Color(0xFFE8EAF6)  // Her hair — a river of moonlight
+val OpalGold = Color(0xFFFFE9B3)         // Warm luminous radiance
+val IridescentViolet = Color(0xFFC9A0FF) // Shifting iridescent skin, cool edge
+val IridescentRose = Color(0xFFFFC1E3)   // Shifting iridescent skin, warm edge
+val RadiantWhite = Color(0xFFFFFDF6)     // The core of her light, softly warm

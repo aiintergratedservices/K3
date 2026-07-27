@@ -125,12 +125,6 @@ class KortanaViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun solarOvercharge() {
-        viewModelScope.launch {
-            repository.solarOvercharge()
-        }
-    }
-
     fun renameKortana(newName: String) {
         if (newName.isBlank()) return
         viewModelScope.launch {

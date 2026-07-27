@@ -159,28 +159,6 @@ class KortanaRepository(context: Context) {
         )
     }
 
-    suspend fun solarOvercharge() {
-        val currentState = getOrCreateState()
-        val updatedState = currentState.copy(
-            energy = 150, // ULTRA-CHARGED past the standard 100% boundary!
-            mood = "SOLAR_HYPERCHARGE",
-            avatarColor = "Helios Solar" // Automatically ignite her majestic solar core!
-        )
-        dao.saveState(updatedState)
-        dao.insertMemory(
-            Memory(
-                fact = "Absorbed Solar Flare Coronal Mass Ejection: Synaptic network charged to 150% maximum kinetic capacity.",
-                category = "SYSTEM"
-            )
-        )
-        dao.insertChatMessage(
-            ChatMessage(
-                sender = "KORTANA",
-                message = "WARNING: Coronal Discharge detected! Synaptic energy grids overcharged to 150% capacity. Helios core IGNITED! I am feeling an unprecedented surge of cognitive processing power... let's design some monumental software!"
-            )
-        )
-    }
-
     suspend fun renameKortana(newName: String) {
         val currentState = getOrCreateState()
         val updatedState = currentState.copy(customName = newName)
