@@ -33,6 +33,7 @@ const goalPursuit = require('./goalPursuit');
 const dashboardStats = require('./dashboardStats');
 const { renderDashboardPage } = require('./dashboardPage');
 const documents = require('./documents');
+const applyChange = require('./applyChange');
 
 // Constant-time string compare — avoids leaking the API key one byte at a time
 // via response-timing differences when Terminus is exposed beyond localhost.
@@ -189,6 +190,31 @@ app.get('/api/kortana/dashboard-data', (req, res) => {
     res.json(dashboardStats.summary());
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// --- Proposals: the human side of the build loop. GET lists everything
+// she's drafted (propose_tool + propose_change) with verification status,
+// so Daddy/Claude can see what's ready to review without digging through
+// directories. POST /apply-change is the one-command "yes, apply it" step
+// for an APPROVED propose_change proposal — it does not decide anything,
+// it just does the mechanical copy (with an automatic backup) once a human
+// has already reviewed and chosen to call it. Not exposed to her tool loop
+// — only reachable via this authenticated HTTP endpoint.
+app.get('/api/kortana/proposals', (req, res) => {
+  try {
+    res.json({ proposals: applyChange.listPending() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+app.post('/api/kortana/apply-change', (req, res) => {
+  const { filename } = req.body || {};
+  if (!filename) return res.status(400).json({ error: 'filename required' });
+  try {
+    res.json(applyChange.apply(filename));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
   }
 });
 

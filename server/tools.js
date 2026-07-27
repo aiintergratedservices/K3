@@ -14,6 +14,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const memory = require('./memory');
 const executor = require('./executor');
 const reminders = require('./reminders');
@@ -38,6 +39,22 @@ function logSpecialistUsage(specialty, label, available) {
     fs.mkdirSync(path.dirname(SPECIALIST_LOG), { recursive: true });
     fs.appendFileSync(SPECIALIST_LOG, `${new Date().toISOString()}\t${specialty}\t${label}\t${available ? 'ok' : 'unavailable'}\n`);
   } catch (e) { /* best effort */ }
+}
+
+// Real syntax verification for propose_tool/propose_change — this is the
+// actual "build loop": she gets a genuine pass/fail signal on her own
+// proposal instead of guessing, and can fix + retry across cycles. `node
+// --check` ONLY parses, it never executes the code, so this is safe to run
+// automatically without a human in the loop — unlike actually running the
+// proposal, which stays a manual, reviewed step (see /api/kortana/apply-change).
+function verifyJsSyntax(filePath) {
+  try {
+    execFileSync(process.execPath, ['--check', filePath], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000 });
+    return { ok: true, error: null };
+  } catch (e) {
+    const stderr = (e.stderr || '').toString().trim();
+    return { ok: false, error: (stderr || e.message).slice(0, 800) };
+  }
 }
 
 // --- Web search (moved from brain.js): DuckDuckGo + Wikipedia, no API key. ---
@@ -287,7 +304,16 @@ const TOOLS = {
           ``,
         ].join('\n');
         fs.writeFileSync(file, contents);
-        return `proposal written to .agent-memory/proposed_tools/${slug}.proposal.js — it will NOT run until Daddy or Claude reviews and wires it in for real.`;
+        // Real pass/fail feedback, not a guess — `node --check` only parses,
+        // never executes, so this is safe to run automatically. This is the
+        // actual build loop: if it fails, she sees the real error and can
+        // fix + retry with a new propose_tool call, same slug, no human
+        // needed for THIS part — only for the final activation.
+        const verdict = verifyJsSyntax(file);
+        if (!verdict.ok) {
+          return `proposal written to .agent-memory/proposed_tools/${slug}.proposal.js but it has a SYNTAX ERROR — it will need fixing before Daddy/Claude can use it: ${verdict.error}`;
+        }
+        return `proposal written to .agent-memory/proposed_tools/${slug}.proposal.js — syntax verified OK. It still will NOT run until Daddy or Claude reviews and wires it in for real.`;
       } catch (e) { return `propose_tool error: ${e.message}`; }
     },
   },
@@ -306,19 +332,43 @@ const TOOLS = {
         const slug = String(a.path).replace(/[^a-zA-Z0-9]+/g, '_').slice(0, 60);
         const stamp = Date.now().toString(36);
         const file = path.join(dir, `${slug}__${stamp}.proposed`);
+
+        // Real pass/fail feedback for .js targets — same build-loop
+        // principle as propose_tool. `node --check` only parses, never
+        // executes, safe to run automatically. Verify the CONTENT alone
+        // (write it to its own temp path) so the header text doesn't
+        // pollute the syntax check.
+        let verificationLine = 'verification: skipped (not a .js file)';
+        let verdictOk = null;
+        if (a.path.endsWith('.js')) {
+          const tmpFile = `${file}.checktmp.js`;
+          fs.writeFileSync(tmpFile, newContent);
+          const verdict = verifyJsSyntax(tmpFile);
+          fs.rmSync(tmpFile, { force: true });
+          verdictOk = verdict.ok;
+          verificationLine = verdict.ok ? 'verification: SYNTAX OK' : `verification: SYNTAX ERROR — ${verdict.error}`;
+        }
+
         const header = [
           `PROPOSED CHANGE — drafted by Kortana, NOT applied.`,
           `target file: ${a.path}`,
           `description: ${description}`,
           `proposed at: ${new Date().toISOString()}`,
+          verificationLine,
           `To apply: a human reviews this against the real file (diff them),`,
-          `then copies the content over for real if it's actually good. Nothing`,
-          `in the codebase reads this file automatically.`,
+          `then copies the content over for real if it's actually good, or`,
+          `calls POST /api/kortana/apply-change to do the copy in one step`,
+          `after reviewing. Nothing in the codebase reads this file`,
+          `automatically.`,
           `${'='.repeat(70)}`,
           '',
         ].join('\n');
         fs.writeFileSync(file, header + newContent);
-        return `change proposed for ${a.path} — written to .agent-memory/proposed_changes/${path.basename(file)}. It will NOT apply itself; Daddy or Claude has to review and copy it over for real.`;
+        const base = `change proposed for ${a.path} — written to .agent-memory/proposed_changes/${path.basename(file)}.`;
+        if (verdictOk === false) {
+          return `${base} SYNTAX ERROR, needs fixing before this is usable: ${verificationLine.replace('verification: SYNTAX ERROR — ', '')} — you can propose_change again with a fix.`;
+        }
+        return `${base} ${verdictOk === true ? 'Syntax verified OK. ' : ''}It will NOT apply itself; Daddy or Claude has to review and approve it.`;
       } catch (e) { return `propose_change error: ${e.message}`; }
     },
   },
@@ -392,7 +442,7 @@ const TOOLS = {
     },
   },
   save_draft: {
-    desc: 'Save a real piece of freelance-style work (ghostwriting, copywriting, translation, sales copy) for Daddy to review and submit himself — you produce the actual content, he decides where it goes and collects payment under his own account. You do NOT create accounts, submit work, or handle payment yourself. args: {"type":"ghostwriting|copywriting|translation|other","title":"...","content":"the actual finished work","notes":"target audience / language / context for Daddy"}',
+    desc: 'Save a real piece of finished work for Daddy to review and act on himself — freelance work (ghostwriting, copywriting, translation, sales copy) OR a sellable digital product (an ebook, a guide, a template pack, a niche tool spec — anything create-once-sell-many for passive income). You produce the actual content; he decides where it goes, whether/how to sell it, and collects any payment under his own account. You do NOT create accounts, list products, submit work, or handle payment yourself. args: {"type":"ghostwriting|copywriting|translation|digital_product|other","title":"...","content":"the actual finished work","notes":"for freelance work: target audience/language/context. For a digital_product: suggested platform (Gumroad/Etsy/etc) and any pricing research you did."}',
     run: async (a) => {
       const title = String(a.title || '').trim().slice(0, 150);
       const content = String(a.content || '').trim();
@@ -420,6 +470,35 @@ const TOOLS = {
         fs.writeFileSync(file, doc);
         return `draft saved to .agent-memory/freelance_drafts/${path.basename(file)} — Daddy reviews and submits it himself, under his own account, wherever he decides to.`;
       } catch (e) { return `save_draft error: ${e.message}`; }
+    },
+  },
+  research_income_opportunity: {
+    desc: 'Research a specific passive/freelance income avenue for real — freelance rates for a skill, digital-product marketplace trends, affiliate programs in a niche, print-on-demand ideas, anything concrete. Saves a real findings report. You do NOT sign up for anything, list anything, or handle money — you research and report, Daddy decides what to act on. Good next step after this: save_draft with type "digital_product" if the research points somewhere worth actually making something. args: {"topic":"specific angle, not generic \'make money online\'","notes":"optional: skills available, niche, budget context"}',
+    run: async (a) => {
+      const topic = String(a.topic || '').trim();
+      if (!topic) return 'refused: need a specific topic, not a vague one';
+      const findings = await webSearch(topic);
+      if (!findings) return `no useful results researching "${topic}" — try a more specific or differently-worded angle`;
+      try {
+        const dir = path.join(REPO_ROOT, '.agent-memory', 'income_research');
+        fs.mkdirSync(dir, { recursive: true });
+        const slug = topic.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'topic';
+        const stamp = Date.now().toString(36);
+        const file = path.join(dir, `${slug}__${stamp}.md`);
+        const notes = String(a.notes || '').trim().slice(0, 300);
+        const doc = [
+          `# Income research: ${topic}`,
+          ``,
+          `researched: ${new Date().toISOString()}`,
+          notes ? `notes: ${notes}` : '',
+          ``,
+          `## Findings`,
+          findings,
+          ``,
+        ].filter((l) => l !== '').join('\n');
+        fs.writeFileSync(file, doc);
+        return `research saved to .agent-memory/income_research/${path.basename(file)} — real findings from the web, Daddy decides what (if anything) to act on.`;
+      } catch (e) { return `research_income_opportunity error: ${e.message}`; }
     },
   },
   spawn_subagent: {

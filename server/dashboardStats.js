@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const memory = require('./memory');
 const goals = require('./goals');
+const applyChange = require('./applyChange');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const AGENT_MEMORY_DIR = path.join(REPO_ROOT, '.agent-memory');
@@ -98,6 +99,19 @@ function recentGrowthCycles(limit = 10) {
   }
 }
 
+// Simple listing helper for the freelance-drafts / income-research folders —
+// just filenames + mtimes, the human opens the actual file to read it.
+function listFolder(dirName) {
+  try {
+    const dir = path.join(AGENT_MEMORY_DIR, dirName);
+    return fs.readdirSync(dir)
+      .map((f) => ({ filename: f, mtime: fs.statSync(path.join(dir, f)).mtime.toISOString() }))
+      .sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+  } catch {
+    return [];
+  }
+}
+
 function summary() {
   const memStats = memory.stats();
   const allGoals = goals.list();
@@ -116,6 +130,9 @@ function summary() {
     skills: skillsList(),
     specialistUsage: specialistUsage(),
     recentGrowthCycles: recentGrowthCycles(),
+    pendingProposals: applyChange.listPending(),
+    freelanceDrafts: listFolder('freelance_drafts'),
+    incomeResearch: listFolder('income_research'),
     generatedAt: new Date().toISOString(),
   };
 }

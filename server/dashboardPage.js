@@ -228,6 +228,29 @@ function render(data) {
         </div>
       \`).join('') : '<div class="empty">No growth cycles have fired yet (first one runs 10 min after server boot, then every 6h).</div>'}
     </div>
+    <div class="card">
+      <h2>Pending Proposals — Your Review Queue</h2>
+      \${data.pendingProposals.length ? data.pendingProposals.map(p => \`
+        <div class="list-item">
+          <span class="badge \${p.kind === 'change' && p.verification && p.verification.includes('OK') ? 'done' : (p.kind === 'change' && p.verification && p.verification.includes('ERROR') ? 'blocked' : 'active')}">\${p.kind.toUpperCase()}</span>
+          \${p.target}
+          <div class="meta">\${p.filename}\${p.verification ? ' — ' + p.verification : ''}</div>
+          \${p.summary ? \`<div class="meta">\${p.summary}</div>\` : ''}
+        </div>
+      \`).join('') : '<div class="empty">Nothing pending review.</div>'}
+    </div>
+    <div class="card">
+      <h2>Freelance / Product Drafts (\${data.freelanceDrafts.length})</h2>
+      \${data.freelanceDrafts.length ? data.freelanceDrafts.map(f => \`
+        <div class="list-item">\${f.filename}<div class="meta">\${fmtDate(f.mtime)}</div></div>
+      \`).join('') : '<div class="empty">No drafts yet.</div>'}
+    </div>
+    <div class="card">
+      <h2>Income Research (\${data.incomeResearch.length})</h2>
+      \${data.incomeResearch.length ? data.incomeResearch.map(f => \`
+        <div class="list-item">\${f.filename}<div class="meta">\${fmtDate(f.mtime)}</div></div>
+      \`).join('') : '<div class="empty">No research saved yet.</div>'}
+    </div>
   \`;
   drawLineChart(document.getElementById('memChart'), data.memory.timeline, 'total');
   if (data.specialistUsage.length) {

@@ -26,10 +26,19 @@ ${recentLog}
 
 Take exactly ONE real, concrete step toward this goal right now — actually
 call a tool (web_search, web_fetch, run, read_file, write_skill,
-propose_tool, spawn_subagent, journal, remember — whatever fits). Don't just
-describe what you'd do; do it. Decide for yourself which approach is best —
-don't stop to ask permission for a reasonable, reversible step, just take it
-and report what you did.
+propose_tool, propose_change, consult_specialist, ingest_document,
+spawn_subagent, journal, remember — whatever fits). Don't just describe
+what you'd do; do it. Decide for yourself which approach is best — don't
+stop to ask permission for a reasonable, reversible step, just take it and
+report what you did.
+
+If this goal involves code: propose_tool and propose_change both run a
+real syntax check automatically and tell you pass/fail — if the log above
+shows a syntax error from a previous cycle, fix that specific error and
+propose_change/propose_tool again, don't start over from scratch. Getting
+to "syntax verified OK" is real progress even before a human applies it —
+say so plainly rather than claiming the change is live (it isn't until
+Daddy or Claude applies it).
 
 If the progress log above shows a previous attempt that didn't pan out, do
 NOT repeat it — pick a genuinely different angle this cycle. A failed
