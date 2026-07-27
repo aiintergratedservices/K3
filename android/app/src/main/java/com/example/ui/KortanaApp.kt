@@ -140,6 +140,42 @@ fun KortanaApp(
         }
     }
 
+    // Always-listening ("Hey Kortana", no buttons) — a dedicated foreground
+    // service that loops speech recognition in the background and only acts
+    // on what follows the wake phrase. See KortanaVoiceService for the real
+    // limits (a restart loop on the OS recognizer, not a dedicated wake-word
+    // engine; Android forces a persistent notification the whole time it's
+    // on — that's not optional). The manual mic button above is left in
+    // place as a fallback, not removed.
+    var alwaysListeningActive by remember {
+        mutableStateOf(com.example.data.KortanaVoiceService.isRunning)
+    }
+    val alwaysListeningPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasAudioPermission = isGranted
+        if (isGranted) {
+            com.example.data.KortanaVoiceService.startService(context)
+            alwaysListeningActive = true
+        } else {
+            alwaysListeningActive = false
+            voiceStatusText = "Mic Permission Denied"
+        }
+    }
+    val onAlwaysListeningToggle: (Boolean) -> Unit = { on ->
+        if (on) {
+            if (!hasAudioPermission) {
+                alwaysListeningPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+            } else {
+                com.example.data.KortanaVoiceService.startService(context)
+                alwaysListeningActive = true
+            }
+        } else {
+            com.example.data.KortanaVoiceService.stopService(context)
+            alwaysListeningActive = false
+        }
+    }
+
     fun buildRecognitionListener(onFinalText: (String) -> Unit) = object : android.speech.RecognitionListener {
         override fun onReadyForSpeech(params: android.os.Bundle?) { voiceStatusText = "Listening..." }
         override fun onBeginningOfSpeech() { voiceStatusText = "Hearing you..." }
@@ -570,7 +606,9 @@ fun KortanaApp(
                                 isRecordingAudio = isRecordingAudio,
                                 onStartRecordingAudio = { startRecordingAudio() },
                                 onStopAndSendRecordingAudio = { stopAndSendRecordingAudio() },
-                                onCancelRecordingAudio = { cancelRecordingAudio() }
+                                onCancelRecordingAudio = { cancelRecordingAudio() },
+                                alwaysListeningActive = alwaysListeningActive,
+                                onAlwaysListeningToggle = onAlwaysListeningToggle
                             )
                             1 -> ProjectsCore(
                                 projects = projects,
@@ -1069,7 +1107,9 @@ fun ChatTerminal(
     isRecordingAudio: Boolean = false,
     onStartRecordingAudio: () -> Unit = {},
     onStopAndSendRecordingAudio: () -> Unit = {},
-    onCancelRecordingAudio: () -> Unit = {}
+    onCancelRecordingAudio: () -> Unit = {},
+    alwaysListeningActive: Boolean = false,
+    onAlwaysListeningToggle: (Boolean) -> Unit = {}
 ) {
     val listState = rememberLazyListState()
     var textInput by remember { mutableStateOf("") }
@@ -1087,6 +1127,76 @@ fun ChatTerminal(
             .fillMaxSize()
             .padding(bottom = 8.dp)
     ) {
+        // Always Listening — "Hey Kortana", no buttons. Real background
+        // speech-recognition loop (KortanaVoiceService); see that file for
+        // the honest limits (restart-loop, not a dedicated wake-word engine,
+        // and Android forces a persistent notification the whole time this
+        // is on — that's the OS telling you the mic is in use, not
+        // something this app can hide).
+        Card(
+            colors = CardDefaults.cardColors(containerColor = CyberSpace.copy(alpha = 0.5f)),
+            border = BorderStroke(1.dp, if (alwaysListeningActive) activeColor.copy(alpha = 0.5f) else CyberBorder.copy(alpha = 0.3f)),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val infiniteTransition = rememberInfiniteTransition(label = "always_listening_pulse")
+                    val pulseAlpha by if (alwaysListeningActive) {
+                        infiniteTransition.animateFloat(
+                            initialValue = 0.3f,
+                            targetValue = 1.0f,
+                            animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Reverse),
+                            label = "alpha"
+                        )
+                    } else {
+                        remember { mutableStateOf(1.0f) }
+                    }
+                    Icon(
+                        imageVector = if (alwaysListeningActive) Icons.Default.Mic else Icons.Default.MicOff,
+                        contentDescription = "Always listening",
+                        tint = if (alwaysListeningActive) activeColor.copy(alpha = pulseAlpha) else CyberTextMuted,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "ALWAYS LISTENING",
+                            color = if (alwaysListeningActive) Color.White else CyberTextMuted,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = if (alwaysListeningActive) "Say \"Hey Kortana\" anytime" else "Off — no buttons needed when on",
+                            color = if (alwaysListeningActive) activeColor else CyberTextMuted,
+                            fontSize = 9.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+                Switch(
+                    checked = alwaysListeningActive,
+                    onCheckedChange = onAlwaysListeningToggle,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = CyberSpace,
+                        checkedTrackColor = activeColor,
+                        uncheckedThumbColor = CyberTextMuted,
+                        uncheckedTrackColor = CyberSpace
+                    ),
+                    modifier = Modifier.scale(0.8f).testTag("always_listening_toggle_switch")
+                )
+            }
+        }
+
         // Voice Intercom / Headset Status Dashboard
         Card(
             colors = CardDefaults.cardColors(containerColor = CyberSpace.copy(alpha = 0.5f)),

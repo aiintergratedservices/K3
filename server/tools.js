@@ -17,6 +17,7 @@ const path = require('path');
 const memory = require('./memory');
 const executor = require('./executor');
 const reminders = require('./reminders');
+const goals = require('./goals');
 
 const clip = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
 
@@ -195,6 +196,62 @@ const TOOLS = {
         fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${slug}\ndescription: ${description}\n---\n\n${body}\n`);
         return `skill "${slug}" saved — it loads into your prompt on your next reply.`;
       } catch (e) { return `write_skill error: ${e.message}`; }
+    },
+  },
+  set_goal: {
+    desc: 'Register an end goal Daddy just gave you in conversation, so you pursue it autonomously afterward — a background cycle keeps taking real steps toward it on its own schedule, no further hand-holding needed. Only call this for a real goal Daddy actually stated, not something you invented. args: {"text":"the goal, in your own words"}',
+    run: async (a) => {
+      const g = goals.add(a.text);
+      return g ? `goal registered (id ${g.id}): "${g.text}" — I'll work it in the background from here.` : 'refused: no goal text given';
+    },
+  },
+  list_goals: {
+    desc: 'See all goals Daddy has set and their status/progress log — use this before starting a growth or pursuit cycle so you build on real progress instead of restarting. args: {}',
+    run: async () => {
+      const all = goals.list();
+      if (!all.length) return '(no goals set yet)';
+      return all.map((g) => {
+        const lastLog = g.log.length ? g.log[g.log.length - 1].note || '(no note)' : '(no progress yet)';
+        return `- [${g.status}] "${g.text}" (id ${g.id}) — last: ${clip(lastLog, 140)}`;
+      }).join('\n');
+    },
+  },
+  propose_tool: {
+    desc: 'Draft a NEW tool you wish you had, when none of your existing tools can do something. Writes a real file for Daddy/Claude to review — it does NOT activate itself (that would mean running code you wrote with no one checking it first, which is not a limitation to work around, it is a safety boundary). args: {"name":"kebab-name","description":"one line: what it does and when to use it","args_schema":"e.g. {\\"query\\":\\"string\\"}","implementation":"proposed JS: async (args) => { ... return \'result\'; }","reason":"why you need this and what you tried instead"}',
+    run: async (a) => {
+      const slug = String(a.name || '').toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+      if (!slug) return 'refused: need a kebab-case name';
+      const description = String(a.description || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+      const implementation = String(a.implementation || '').trim().slice(0, 4000);
+      const reason = String(a.reason || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+      if (!description || !implementation) return 'refused: need both a description and a proposed implementation';
+      if (TOOLS[slug]) return `refused: a tool named "${slug}" already exists — you may already have this`;
+      try {
+        const dir = path.join(REPO_ROOT, '.agent-memory', 'proposed_tools');
+        fs.mkdirSync(dir, { recursive: true });
+        const file = path.join(dir, `${slug}.proposal.js`);
+        const contents = [
+          `// PROPOSED TOOL — drafted by Kortana, NOT active.`,
+          `// Nothing in this codebase requires files from proposed_tools/, so this`,
+          `// code never runs on its own. To activate it, a human (Daddy or Claude)`,
+          `// reviews this, then manually adds a real entry to the TOOLS registry in`,
+          `// server/tools.js.`,
+          `//`,
+          `// name: ${slug}`,
+          `// description: ${description}`,
+          `// args_schema: ${String(a.args_schema || '(not specified)').replace(/\s+/g, ' ').slice(0, 300)}`,
+          `// reason: ${reason || '(not given)'}`,
+          `// proposed at: ${new Date().toISOString()}`,
+          ``,
+          `module.exports = {`,
+          `  desc: ${JSON.stringify(description)},`,
+          `  run: ${implementation}`,
+          `};`,
+          ``,
+        ].join('\n');
+        fs.writeFileSync(file, contents);
+        return `proposal written to .agent-memory/proposed_tools/${slug}.proposal.js — it will NOT run until Daddy or Claude reviews and wires it in for real.`;
+      } catch (e) { return `propose_tool error: ${e.message}`; }
     },
   },
   spawn_subagent: {

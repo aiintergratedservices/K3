@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
@@ -42,6 +43,16 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="synaptic_consciousness_loop" />
         </service>
+
+        <!-- Always-listening voice ("Hey Kortana", no buttons). Requires the
+             Android-mandated persistent notification while active — that's
+             the OS telling the owner the mic is in use in the background,
+             not something this app can hide. -->
+        <service
+            android:name=".data.KortanaVoiceService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- Kortana's "hands": device control via Accessibility. Protected by the
              system-only BIND_ACCESSIBILITY_SERVICE permission; inert until the

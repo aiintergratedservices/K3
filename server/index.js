@@ -27,6 +27,9 @@ const persist = require('./persist');
 const memory = require('./memory');
 const executor = require('./executor');
 const reminders = require('./reminders');
+const growth = require('./growth');
+const goals = require('./goals');
+const goalPursuit = require('./goalPursuit');
 
 // Constant-time string compare — avoids leaking the API key one byte at a time
 // via response-timing differences when Terminus is exposed beyond localhost.
@@ -137,6 +140,33 @@ app.post('/api/kortana/coach', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// --- Growth cycle: proactive, scheduled self-reflection (see growth.js and
+// the setInterval near the bottom of this file for the autonomous trigger).
+// This endpoint lets it be fired on demand too, for testing or on request.
+app.post('/api/kortana/grow', async (req, res) => {
+  try {
+    const result = await growth.runGrowthCycle();
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- Goals: Daddy sets the end goal, she pursues it autonomously afterward.
+// GET lists everything (with progress logs) so it's visible outside the app
+// too; POST registers a new one (normally she does this herself via the
+// set_goal tool when Daddy states a goal in conversation, but this is here
+// directly as well). The actual autonomous work happens in the scheduled
+// setInterval near the bottom of this file (goalPursuit.runPursuitCycle).
+app.get('/api/kortana/goals', (req, res) => {
+  res.json({ goals: goals.list() });
+});
+app.post('/api/kortana/goals', (req, res) => {
+  const g = goals.add((req.body && req.body.text) || '');
+  if (!g) return res.status(400).json({ error: 'text required' });
+  res.json({ goal: g });
 });
 
 // --- Agent task harness (UI-driven, streamed over WebSocket) --------------
@@ -331,6 +361,29 @@ setInterval(() => {
     }
   } catch (e) { console.warn('[reminders] check failed:', e.message); }
 }, 30_000);
+
+// Proactive self-reflection — real, autonomous, on her own clock (see
+// growth.js). First run 10 minutes after boot (not instantly on every
+// restart/redeploy), then every 6 hours. Each run either produces a real
+// tool call or an honest "not yet" — never a bare claim of improvement.
+setTimeout(() => {
+  growth.runGrowthCycle().catch((e) => console.warn('[growth] cycle failed:', e.message));
+  setInterval(() => {
+    growth.runGrowthCycle().catch((e) => console.warn('[growth] cycle failed:', e.message));
+  }, 6 * 3600_000);
+}, 10 * 60_000);
+
+// Goal pursuit — "Daddy sets the end goal, she makes it happen." Runs more
+// often than the general reflection cycle (goals need actual momentum, not
+// occasional musing), but only does real work when there's something active
+// to pursue — an empty goal list costs nothing. First run 3 minutes after
+// boot, then every 30 minutes.
+setTimeout(() => {
+  goalPursuit.runPursuitCycle().catch((e) => console.warn('[goals] pursuit cycle failed:', e.message));
+  setInterval(() => {
+    goalPursuit.runPursuitCycle().catch((e) => console.warn('[goals] pursuit cycle failed:', e.message));
+  }, 30 * 60_000);
+}, 3 * 60_000);
 
 // --- Boot ---
 (async () => {
