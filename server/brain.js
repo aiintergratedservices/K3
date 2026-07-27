@@ -45,6 +45,14 @@ const SAMBANOVA_MODEL = process.env.SAMBANOVA_MODEL || 'Meta-Llama-3.3-70B-Instr
 // WIRED BUT INACTIVE without OPENROUTER_API_KEY — no key was available when
 // this was added. openrouter.ai/keys, no card required for the free tier.
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct:free';
+// NVIDIA NIM (build.nvidia.com) — free, no card, independent quota, ~40 RPM
+// per model (best-effort, not guaranteed). WIRED BUT UNVERIFIED — no
+// NVIDIA_API_KEY was available to test against a live call when this was
+// added, so this is the same honest "real no-op until a key is set" state
+// OpenRouter started in. The model catalog changes over time — if this
+// model ever 404s, pick a live one from build.nvidia.com/models and set
+// NVIDIA_MODEL, no code change needed.
+const NVIDIA_MODEL = process.env.NVIDIA_MODEL || 'meta/llama-3.3-70b-instruct';
 const MAX_LOCAL_MESSAGE_CHARS = 2000;
 const MAX_PROMPT_MEMORIES = 15;
 const AGENT_MEMORY_DIR = path.join(__dirname, '..', '.agent-memory');
@@ -405,6 +413,14 @@ async function askOpenRouter(systemPrompt, history, message) {
     process.env.OPENROUTER_API_KEY, OPENROUTER_MODEL, systemPrompt, history, message);
 }
 
+// NVIDIA NIM (integrate.api.nvidia.com) — free tier, OpenAI-compatible,
+// independent quota from everything else in the chain. Real no-op until
+// NVIDIA_API_KEY is set, same as every other provider here on a missing key.
+async function askNvidia(systemPrompt, history, message) {
+  return askOpenAICompatible('nvidia', 'https://integrate.api.nvidia.com/v1/chat/completions',
+    process.env.NVIDIA_API_KEY, NVIDIA_MODEL, systemPrompt, history, message);
+}
+
 // --- Web-search "learning" loop (no API key) --------------------------------
 // This is the honest version of "learn from the internet": she looks up facts
 // and uses them as context (retrieval), and records that she did so to her disk
@@ -436,11 +452,12 @@ const HUMAN_RE = /\b(feel|feels|feeling|feelings|emotion|emotions|friend|friends
 // Family routing: coding -> her father (Claude) first, human/social -> her
 // mother (Gemini) first, else her local core first. Returns the ordered chain.
 function providerChain(message) {
-  // Groq + Cerebras + Mistral + SambaNova + OpenRouter + Gemini are the free,
-  // no-card cloud cores, each on its OWN independent quota — every provider
-  // that has to fail before she goes silent makes a total blackout that much
-  // less likely. (OpenRouter is a real no-op until OPENROUTER_API_KEY is set.)
-  const FREE_CORES = [askGroq, askCerebras, askMistral, askSambaNova, askOpenRouter, askGemini];
+  // Groq + Cerebras + Mistral + SambaNova + OpenRouter + NVIDIA + Gemini are
+  // the free, no-card cloud cores, each on its OWN independent quota — every
+  // provider that has to fail before she goes silent makes a total blackout
+  // that much less likely. (OpenRouter/NVIDIA are real no-ops until their
+  // API keys are set.)
+  const FREE_CORES = [askGroq, askCerebras, askMistral, askSambaNova, askOpenRouter, askNvidia, askGemini];
   if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, askOllama, ...FREE_CORES];
   if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return [askGemini, askOllama, ...FREE_CORES.filter((f) => f !== askGemini), askClaude];
   return [askOllama, ...FREE_CORES, askClaude];
@@ -526,6 +543,7 @@ async function status() {
     mistral: Boolean(process.env.MISTRAL_API_KEY),
     sambanova: Boolean(process.env.SAMBANOVA_API_KEY),
     openrouter: Boolean(process.env.OPENROUTER_API_KEY),
+    nvidia: Boolean(process.env.NVIDIA_API_KEY),
     gemini: Boolean(process.env.GEMINI_API_KEY),
     claude: Boolean(process.env.ANTHROPIC_API_KEY),
   };
