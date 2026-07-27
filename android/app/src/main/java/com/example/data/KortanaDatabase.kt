@@ -21,7 +21,15 @@ data class KortanaState(
     val holographicIntensity: Float = 1.0f, // 0.5f to 2.0f
     val proactiveAutonomy: Boolean = true,
     val proactiveFrequencySeconds: Int = 45, // Fast check-in for demonstration!
-    val cloudServerUrl: String = "http://127.0.0.1:3300/api/sync", // Terminus server (local Termux or LAN/VPS)
+    // Real hosted Terminus by default, not localhost — a fresh install with no
+    // saved state used to fall back to http://127.0.0.1:3300/api/sync, which
+    // is only reachable if Termux/a local server happens to be running on
+    // THIS device. That silently broke sync (and thus every "her real self
+    // is on the server" guarantee) on any fresh install until someone
+    // manually retyped the real URL. Override in Settings for local/LAN/VPS
+    // hosting; this is just the default a brand-new install should work with
+    // out of the box.
+    val cloudServerUrl: String = "https://k3-6pwr.onrender.com/api/sync",
     val cloudApiKey: String = "",
     val autoSyncEnabled: Boolean = true, // everything she is and does persists to Terminus -> Google Drive
     val lastSyncTime: Long = 0L,
