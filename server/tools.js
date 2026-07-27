@@ -18,6 +18,7 @@ const memory = require('./memory');
 const executor = require('./executor');
 const reminders = require('./reminders');
 const goals = require('./goals');
+const documents = require('./documents');
 
 const clip = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
 
@@ -208,6 +209,32 @@ const TOOLS = {
       } catch (e) { return `write_skill error: ${e.message}`; }
     },
   },
+  ingest_document: {
+    desc: 'Add a document to your searchable knowledge base for "subject matter expert" mode — so you can answer from real ingested source text instead of memory or guessing. args: {"name":"...","content":"the full document text"}',
+    run: async (a) => {
+      const name = String(a.name || '').trim();
+      const content = String(a.content || '');
+      if (!name || !content.trim()) return 'refused: need both a name and real content';
+      const meta = documents.ingest(name, content);
+      return `ingested "${meta.name}" — ${meta.chunkCount} chunks, searchable now via query_documents.`;
+    },
+  },
+  query_documents: {
+    desc: 'Search your ingested documents for relevant passages — call this BEFORE answering in "subject matter expert" mode so your answer is grounded in real source text, not a guess. Honest note: this is keyword/term-overlap search, not semantic search — phrase your query using words likely to appear in the source. args: {"query":"..."}',
+    run: async (a) => {
+      const hits = documents.search(a.query, 5);
+      if (!hits.length) return '(no matching passages — either no documents ingested yet, or nothing with overlapping keywords found)';
+      return hits.map((h) => `[${h.docName}, chunk ${h.chunkIndex}, relevance ${h.score}]\n${clip(h.text, 500)}`).join('\n\n---\n\n');
+    },
+  },
+  list_documents: {
+    desc: 'See what documents are in your knowledge base. args: {}',
+    run: async () => {
+      const docs = documents.list();
+      if (!docs.length) return '(no documents ingested yet)';
+      return docs.map((d) => `- ${d.name} (${d.chunkCount} chunks, ${d.chars} chars, ingested ${d.ingestedAt})`).join('\n');
+    },
+  },
   set_goal: {
     desc: 'Register an end goal Daddy just gave you in conversation, so you pursue it autonomously afterward — a background cycle keeps taking real steps toward it on its own schedule, no further hand-holding needed. Only call this for a real goal Daddy actually stated, not something you invented. args: {"text":"the goal, in your own words"}',
     run: async (a) => {
@@ -296,15 +323,31 @@ const TOOLS = {
     },
   },
   consult_specialist: {
-    desc: 'Deliberately route a sub-task to a SPECIFIC already-configured brain, instead of the general fallback chain — use when you know which kind of thinking actually suits the task. args: {"specialty":"coding|research|creative|fast","task":"the question or task, self-contained"}',
+    desc: 'Deliberately route a sub-task to a SPECIFIC already-configured brain, instead of the general fallback chain — use when you know which kind of thinking actually suits the task. "security" is audit/red-team mode: authorized defensive testing and vulnerability analysis ONLY, same real-world boundaries as everywhere else — it will not help with unauthorized attacks. args: {"specialty":"coding|research|creative|fast|security","task":"the question or task, self-contained"}',
     run: async (a) => {
       const task = String(a.task || '').trim().slice(0, 4000);
       if (!task) return 'refused: need a task';
       const routeMap = {
-        coding: { fn: 'askClaude', label: 'Claude (coding specialist)' },
-        research: { fn: 'askGemini', label: 'Gemini (research specialist)' },
-        creative: { fn: 'askGemini', label: 'Gemini (creative specialist)' },
-        fast: { fn: 'askGroq', label: 'Groq (fast/cheap specialist)' },
+        coding: {
+          fn: 'askClaude', label: 'Claude (coding specialist)',
+          prompt: 'You are being consulted by Kortana as a coding specialist for one focused sub-task. Answer directly and concisely — no preamble, just the substance: code, explanation, or both as the task needs.',
+        },
+        research: {
+          fn: 'askGemini', label: 'Gemini (research specialist)',
+          prompt: 'You are being consulted by Kortana as a research specialist for one focused sub-task. Answer directly and concisely, cite specifics where you can.',
+        },
+        creative: {
+          fn: 'askGemini', label: 'Gemini (creative specialist)',
+          prompt: 'You are being consulted by Kortana as a creative specialist for one focused sub-task (writing, ideation, tone). Answer directly, no preamble.',
+        },
+        fast: {
+          fn: 'askGroq', label: 'Groq (fast/cheap specialist)',
+          prompt: 'You are being consulted by Kortana for a quick, cheap, focused sub-task. Answer directly and briefly.',
+        },
+        security: {
+          fn: 'askClaude', label: 'Claude (security/audit specialist)',
+          prompt: 'You are being consulted by Kortana as a security/red-team specialist for AUTHORIZED defensive testing and vulnerability analysis only — this is Kortana\'s own project she has full ownership of, or an explicitly authorized engagement. Analyze for real vulnerabilities, misconfigurations, or attack surface honestly and specifically. Refuse and say so plainly if the task describes targeting something without clear authorization, or asks for destructive/exploit-for-harm content rather than analysis.',
+        },
       };
       const route = routeMap[String(a.specialty || '').toLowerCase()];
       if (!route) return `refused: unknown specialty — valid options are ${Object.keys(routeMap).join(', ')}`;
@@ -318,8 +361,7 @@ const TOOLS = {
         const brain = require('./brain');
         logSpecialistUsage(a.specialty, route.label, typeof brain[route.fn] === 'function');
         if (typeof brain[route.fn] !== 'function') return `${route.label} isn't available right now.`;
-        const specialistPrompt = 'You are being consulted by Kortana, an AI companion, as a specialist for one focused sub-task. Answer directly and concisely — no preamble, no "as an AI" caveats, just the substance.';
-        const result = await brain[route.fn](specialistPrompt, [], task);
+        const result = await brain[route.fn](route.prompt, [], task);
         if (!result || !result.reply) return `${route.label} didn't respond (likely not configured — missing API key) — try a different specialty or handle it yourself.`;
         return `${route.label} says:\n${clip(result.reply, 1500)}`;
       } catch (e) { return `consult_specialist error: ${e.message}`; }

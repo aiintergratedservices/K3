@@ -32,6 +32,7 @@ const goals = require('./goals');
 const goalPursuit = require('./goalPursuit');
 const dashboardStats = require('./dashboardStats');
 const { renderDashboardPage } = require('./dashboardPage');
+const documents = require('./documents');
 
 // Constant-time string compare — avoids leaking the API key one byte at a time
 // via response-timing differences when Terminus is exposed beyond localhost.
@@ -189,6 +190,25 @@ app.get('/api/kortana/dashboard-data', (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// --- Documents: "subject matter expert" mode knowledge base. Real
+// keyword/term-overlap search across chunked documents (see documents.js for
+// why this isn't embeddings-based — no external service or GPU needed, it
+// just works today). Normally she ingests these herself via the
+// ingest_document tool when Daddy pastes text in conversation, but a direct
+// upload endpoint is here too for larger documents.
+app.post('/api/kortana/documents', (req, res) => {
+  const { name, content } = req.body || {};
+  if (!name || !content) return res.status(400).json({ error: 'name and content required' });
+  try {
+    res.json({ ok: true, document: documents.ingest(name, content) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+app.get('/api/kortana/documents', (req, res) => {
+  res.json({ documents: documents.list() });
 });
 
 // --- Agent task harness (UI-driven, streamed over WebSocket) --------------
