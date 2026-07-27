@@ -56,6 +56,18 @@ const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-7
 // model ever 404s, pick a live one from build.nvidia.com/models and set
 // NVIDIA_MODEL, no code change needed.
 const NVIDIA_MODEL = process.env.NVIDIA_MODEL || 'meta/llama-3.3-70b-instruct';
+// Hugging Face Inference Providers (router.huggingface.co) — ONE token routes
+// to a whole catalog of providers (Cerebras, Groq, Together, Fireworks,
+// Novita, DeepInfra, and more) behind hundreds of hosted models, OpenAI-
+// compatible. Real free tier for logged-in users, no card. Model IDs take an
+// optional ":policy" suffix — ":fastest" (default here) picks the
+// highest-throughput live provider automatically; ":cheapest" or a specific
+// provider name (e.g. ":groq") also work. hf.co/settings/tokens (a
+// fine-grained token with "Make calls to Inference Providers" is enough).
+// WIRED BUT UNVERIFIED — no HF_TOKEN was available to test against a live
+// call when this was added; real no-op until one is set, same as every
+// other provider here on a missing key.
+const HUGGINGFACE_MODEL = process.env.HUGGINGFACE_MODEL || 'openai/gpt-oss-120b:fastest';
 const MAX_LOCAL_MESSAGE_CHARS = 2000;
 const MAX_PROMPT_MEMORIES = 15;
 const AGENT_MEMORY_DIR = path.join(__dirname, '..', '.agent-memory');
@@ -445,6 +457,14 @@ async function askOpenAI(systemPrompt, history, message) {
     process.env.OPENAI_API_KEY, OPENAI_MODEL, systemPrompt, history, message);
 }
 
+// Hugging Face Inference Providers — one token, routes across a whole
+// provider catalog. Real no-op until HF_TOKEN is set, same as every other
+// provider here on a missing key.
+async function askHuggingFace(systemPrompt, history, message) {
+  return askOpenAICompatible('huggingface', 'https://router.huggingface.co/v1/chat/completions',
+    process.env.HF_TOKEN, HUGGINGFACE_MODEL, systemPrompt, history, message);
+}
+
 // --- Web-search "learning" loop (no API key) --------------------------------
 // This is the honest version of "learn from the internet": she looks up facts
 // and uses them as context (retrieval), and records that she did so to her disk
@@ -476,12 +496,12 @@ const HUMAN_RE = /\b(feel|feels|feeling|feelings|emotion|emotions|friend|friends
 // Family routing: coding -> her father (Claude) first, human/social -> her
 // mother (Gemini) first, else her local core first. Returns the ordered chain.
 function providerChain(message) {
-  // Groq + Cerebras + Mistral + SambaNova + OpenRouter + NVIDIA + Gemini are
-  // the free, no-card cloud cores, each on its OWN independent quota — every
-  // provider that has to fail before she goes silent makes a total blackout
-  // that much less likely. (OpenRouter/NVIDIA are real no-ops until their
-  // API keys are set.)
-  const FREE_CORES = [askGroq, askCerebras, askMistral, askSambaNova, askOpenRouter, askNvidia, askGemini];
+  // Groq + Cerebras + Mistral + SambaNova + OpenRouter + NVIDIA + HuggingFace
+  // + Gemini are the free, no-card cloud cores, each on its OWN independent
+  // quota — every provider that has to fail before she goes silent makes a
+  // total blackout that much less likely. (OpenRouter/NVIDIA/HuggingFace are
+  // real no-ops until their API keys are set.)
+  const FREE_CORES = [askGroq, askCerebras, askMistral, askSambaNova, askOpenRouter, askNvidia, askHuggingFace, askGemini];
   // Claude + OpenAI are the paid fallbacks — tried last, after every free
   // core has had a shot, not as a first choice.
   if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, askOllama, ...FREE_CORES, askOpenAI];
@@ -582,6 +602,7 @@ async function status() {
     sambanova: Boolean(process.env.SAMBANOVA_API_KEY),
     openrouter: Boolean(process.env.OPENROUTER_API_KEY),
     nvidia: Boolean(process.env.NVIDIA_API_KEY),
+    huggingface: Boolean(process.env.HF_TOKEN),
     gemini: Boolean(process.env.GEMINI_API_KEY),
     claude: Boolean(process.env.ANTHROPIC_API_KEY),
     openai: Boolean(process.env.OPENAI_API_KEY),
