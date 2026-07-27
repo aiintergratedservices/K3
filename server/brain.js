@@ -28,9 +28,14 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-latest';
 // Groq: free API, no card — fast cloud brain. The way to run her without a big
 // box (Ollama needs GBs of RAM; Groq needs only a free key).
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
-// Cerebras: another free, no-card cloud brain (OpenAI-compatible), independent
-// quota from Groq/Gemini — so one provider's free-tier cap doesn't blackout her.
-const CEREBRAS_MODEL = process.env.CEREBRAS_MODEL || 'llama-3.3-70b';
+// Cerebras: OpenAI-compatible, independent quota — IN CODE ONLY. Verified live
+// 2026-07-27: every model on this account (gpt-oss-120b, zai-glm-4.7,
+// gemma-4-31b) returns 402 payment_required — Cerebras now gates even their
+// listed models behind billing. Harmless to leave wired (askOpenAICompatible
+// just logs + falls through on non-200), but it contributes ZERO free
+// capacity right now. Don't count it as a working brain until billing is
+// added on their end or a model opens back up.
+const CEREBRAS_MODEL = process.env.CEREBRAS_MODEL || 'gpt-oss-120b';
 // Mistral AI: free, no card, independent quota. console.mistral.ai/api-keys
 const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'mistral-small-latest';
 // SambaNova Cloud: free, no card, independent quota. cloud.sambanova.ai/apis
