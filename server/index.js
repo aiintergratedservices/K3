@@ -400,6 +400,12 @@ app.get('/health', async (req, res) => {
     awakeDevices: awake.size,
     cores,
     drive: { enabled: drive.enabled, lastSaveTime: drive.lastSaveTime },
+    // Her actual "does she survive a restart" answer — persist.js mirrors
+    // .agent-memory/ (goals/skills/journal/drafts) + the chat/state backup
+    // to Supabase and restores it on every boot. If this is false, none of
+    // that is safe from Render wiping its disk on restart, regardless of
+    // what drive.enabled says (that's a separate, independent mechanism).
+    persist: { enabled: persist.enabled() },
   });
 });
 
