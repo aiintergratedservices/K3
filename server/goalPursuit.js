@@ -27,7 +27,14 @@ ${recentLog}
 Take exactly ONE real, concrete step toward this goal right now — actually
 call a tool (web_search, web_fetch, run, read_file, write_skill,
 propose_tool, spawn_subagent, journal, remember — whatever fits). Don't just
-describe what you'd do; do it.
+describe what you'd do; do it. Decide for yourself which approach is best —
+don't stop to ask permission for a reasonable, reversible step, just take it
+and report what you did.
+
+If the progress log above shows a previous attempt that didn't pan out, do
+NOT repeat it — pick a genuinely different angle this cycle. A failed
+attempt is real information, not a reason to try the same thing again
+hoping for a different result.
 
 Then say briefly what you did and what's left.
 
