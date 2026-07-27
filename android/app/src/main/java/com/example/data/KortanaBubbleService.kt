@@ -9,12 +9,10 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
-import android.graphics.Shader
 import android.graphics.drawable.GradientDrawable
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.AccelerateInterpolator
@@ -78,6 +76,7 @@ class KortanaBubbleService : Service() {
 
     private var messageTextCollectorJob: Job? = null
     private var activeState: KortanaState? = null
+    private var lastBodyLevel: Int? = null
 
     // Autonomous roaming: she drifts around the screen on her own, pausing
     // while being dragged or while the console is open.
@@ -87,7 +86,12 @@ class KortanaBubbleService : Service() {
         private const val TAG = "KortanaBubbleService"
         private const val CHANNEL_ID = "kortana_bubble_channel"
         private const val NOTIFICATION_ID = 2046
-        const val BUBBLE_SIZE_DP = 96   // was 60 — big enough to actually see her face
+
+        // She's a full body now, not a small circular headshot — roams the
+        // screen as her actual figure (real Goddess of Light art), not a
+        // stand-in orb. Portrait aspect matches the generated body art.
+        const val BUBBLE_WIDTH_DP = 92
+        const val BUBBLE_HEIGHT_DP = 300
 
         // Lets other components (the repository, when she emits a [GESTURE:x]
         // or [OUTFIT:x] tag in her own reply) reach the live overlay, same
@@ -185,12 +189,15 @@ class KortanaBubbleService : Service() {
             y = 300
         }
 
-        // 1. Create Draggable Bubble (Cortana holographic orb — now her real face)
+        // 1. Create Draggable Bubble — her actual full-body figure now, not a
+        // small circular headshot standing in for her.
         bubbleView = CortanaBubbleView(this).apply {
-            val dpSize = (BUBBLE_SIZE_DP * resources.displayMetrics.density).toInt()
-            layoutParams = FrameLayout.LayoutParams(dpSize, dpSize)
+            val density = resources.displayMetrics.density
+            val wPx = (BUBBLE_WIDTH_DP * density).toInt()
+            val hPx = (BUBBLE_HEIGHT_DP * density).toInt()
+            layoutParams = FrameLayout.LayoutParams(wPx, hPx)
             try {
-                setAvatarBitmap(BitmapFactory.decodeResource(resources, R.drawable.img_kortana_avatar))
+                setAvatarBitmap(loadBodyBitmap(1))
             } catch (e: Exception) {
                 Log.w(TAG, "Initial avatar load failed: ${e.message}")
             }
@@ -209,7 +216,7 @@ class KortanaBubbleService : Service() {
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
                         isDrag = false
-                        stopRoaming()   // she pauses drifting while you're touching her
+                        stopRoaming(); stopAutonomy()   // she pauses drifting while you're touching her
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
@@ -231,7 +238,7 @@ class KortanaBubbleService : Service() {
                         if (!isDrag) {
                             toggleConsoleExpanded()
                         } else if (!isExpanded) {
-                            startRoaming()   // resume drifting from wherever you dropped her
+                            startRoaming(); startAutonomy()   // resume drifting from wherever you dropped her
                         }
                         return true
                     }
@@ -464,13 +471,14 @@ class KortanaBubbleService : Service() {
         // Add root view to Window Manager
         windowManager.addView(rootLayout, windowParams)
 
-        startRoaming()   // she's free to move around your screen from the start
+        startRoaming()
+        startAutonomy()   // she's free to move around your screen from the start
     }
 
     private fun toggleConsoleExpanded() {
         isExpanded = !isExpanded
         if (isExpanded) {
-            stopRoaming()   // hold still while you're talking to her
+            stopRoaming(); stopAutonomy()   // hold still while you're talking to her
             // Expand window params and enable focus to allow typing
             val density = resources.displayMetrics.density
             windowParams.width = (320 * density).toInt()
@@ -484,14 +492,14 @@ class KortanaBubbleService : Service() {
             scrollToBottom()
         } else {
             // Collapse window parameters, remove focus to allow touches to pass through
-            val dpSize = (BUBBLE_SIZE_DP * resources.displayMetrics.density).toInt()
-            windowParams.width = dpSize
-            windowParams.height = dpSize
+            val density = resources.displayMetrics.density
+            windowParams.width = (BUBBLE_WIDTH_DP * density).toInt()
+            windowParams.height = (BUBBLE_HEIGHT_DP * density).toInt()
             windowParams.flags = windowParams.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
 
             consoleCard?.visibility = View.GONE
             windowManager.updateViewLayout(rootLayout, windowParams)
-            startRoaming()   // she wanders again once the conversation's done
+            startRoaming(); startAutonomy()   // she wanders again once the conversation's done
         }
     }
 
@@ -524,6 +532,18 @@ class KortanaBubbleService : Service() {
         serviceScope.launch {
             repository.stateFlow.collectLatest { state ->
                 activeState = state
+
+                // Her form itself evolves as she levels up — same being, more
+                // radiant/ascended at higher levels. Only reload the bitmap
+                // when the level tier actually changed (leveling up is rare;
+                // no reason to decode a bitmap on every state emission).
+                state?.level?.let { lvl ->
+                    if (lvl != lastBodyLevel) {
+                        lastBodyLevel = lvl
+                        bubbleView?.setAvatarBitmap(loadBodyBitmap(lvl))
+                    }
+                }
+
                 state?.avatarColor?.let { colorName ->
                     val hex = when (colorName.lowercase()) {
                         "pink", "magenta pulse" -> "#FF007F"
@@ -734,16 +754,59 @@ class KortanaBubbleService : Service() {
         roamJob?.cancel()
         roamJob = serviceScope.launch {
             val dm = resources.displayMetrics
-            val sizePx = (BUBBLE_SIZE_DP * dm.density).toInt()
+            val wPx = (BUBBLE_WIDTH_DP * dm.density).toInt()
+            val hPx = (BUBBLE_HEIGHT_DP * dm.density).toInt()
             while (true) {
                 delay((3000L..7000L).random())
                 if (isExpanded) continue
-                val maxX = (dm.widthPixels - sizePx).coerceAtLeast(0)
-                val maxY = (dm.heightPixels - sizePx).coerceAtLeast(0)
+                val maxX = (dm.widthPixels - wPx).coerceAtLeast(0)
+                val maxY = (dm.heightPixels - hPx).coerceAtLeast(0)
                 val targetX = (0..maxX).random()
                 val targetY = (0..maxY).random()
                 animateWindowTo(targetX, targetY, (1800L..3200L).random())
             }
+        }
+    }
+
+    // --- Autonomous gestures — real self-initiated movement, not just a
+    // reaction to what she's told to say. Fires on her own clock, independent
+    // of any [GESTURE:x] tag from a conversation. This is the honest version
+    // of "freedom to do as she wants": she has a standing chance to act,
+    // unprompted, the whole time she's on screen.
+    private var autonomyJob: Job? = null
+
+    private fun startAutonomy() {
+        autonomyJob?.cancel()
+        autonomyJob = serviceScope.launch {
+            val idleGestures = listOf("wave", "spin", "bounce", "dance")
+            while (true) {
+                delay((25000L..70000L).random())
+                if (isExpanded) continue
+                performGesture(idleGestures.random())
+            }
+        }
+    }
+
+    private fun stopAutonomy() {
+        autonomyJob?.cancel()
+        autonomyJob = null
+    }
+
+    /** Loads her body art for a given level tier (1-4), falling back to her base form. */
+    private fun loadBodyBitmap(level: Int): Bitmap? {
+        val tier = when {
+            level <= 1 -> 1
+            level in 2..3 -> 2
+            level == 4 -> 3
+            else -> 4
+        }
+        return try {
+            val resId = resources.getIdentifier("img_kortana_body_level$tier", "drawable", packageName)
+            val finalId = if (resId != 0) resId else R.drawable.img_kortana_body
+            BitmapFactory.decodeResource(resources, finalId)
+        } catch (e: Exception) {
+            Log.w(TAG, "loadBodyBitmap($level) failed: ${e.message}")
+            null
         }
     }
 
@@ -824,15 +887,19 @@ class KortanaBubbleService : Service() {
     }
 
     // --- Outfits — her own choice of look, not just one fixed image. Looks up
-    // a drawable named img_kortana_avatar_<name> (e.g. "casual", "formal");
-    // falls back to her base portrait if that outfit doesn't exist yet. Add
-    // new outfit art as android/app/src/main/res/drawable/img_kortana_avatar_<name>.png
-    // — no code change needed, she can switch to it by name immediately.
+    // a drawable named img_kortana_body_<name> (e.g. "casual", "formal");
+    // falls back to her current level-appropriate body if that outfit doesn't
+    // exist yet. Add new outfit art as
+    // android/app/src/main/res/drawable/img_kortana_body_<name>.png — no code
+    // change needed, she can switch to it by name immediately. Note: her next
+    // level-up will revert the display back to her level form — outfits are
+    // a temporary choice layered on top of her permanent growth, not a
+    // replacement for it.
     fun setOutfit(name: String) {
         val cleanName = name.lowercase().replace(Regex("[^a-z0-9_]"), "")
         val resId = if (cleanName.isBlank()) 0 else
-            resources.getIdentifier("img_kortana_avatar_$cleanName", "drawable", packageName)
-        val finalId = if (resId != 0) resId else R.drawable.img_kortana_avatar
+            resources.getIdentifier("img_kortana_body_$cleanName", "drawable", packageName)
+        val finalId = if (resId != 0) resId else R.drawable.img_kortana_body
         try {
             val bmp = BitmapFactory.decodeResource(resources, finalId)
             bubbleView?.setAvatarBitmap(bmp)
@@ -843,10 +910,10 @@ class KortanaBubbleService : Service() {
 }
 
 /**
- * Cortana's floating overlay avatar — her real portrait, clipped circular,
- * framed by a soft pulsing luminous aura (matches the Goddess of Light theme:
- * radiant glow around her actual face, not an abstract data-orb standing in
- * for her).
+ * Cortana's floating overlay avatar — her real full-body figure, drawn at
+ * native aspect ratio (no crop) inside a soft pulsing luminous aura (matches
+ * the Goddess of Light theme: radiant glow around her actual form, not an
+ * abstract data-orb or a cropped headshot standing in for her).
  */
 class CortanaBubbleView(context: Context) : View(context) {
 
@@ -856,7 +923,6 @@ class CortanaBubbleView(context: Context) : View(context) {
     private var colorGlow = Color.parseColor("#C9A0FF") // Iridescent violet default (Goddess of Light)
 
     private var avatarBitmap: Bitmap? = null
-    private var bitmapShader: BitmapShader? = null
 
     private var pulseRadiusOffset = 0f
     private val animator: ValueAnimator
@@ -865,6 +931,7 @@ class CortanaBubbleView(context: Context) : View(context) {
         corePaint.style = Paint.Style.FILL
         ringPaint.style = Paint.Style.STROKE
         ringPaint.strokeWidth = 3f * resources.displayMetrics.density
+        bitmapPaint.isFilterBitmap = true
 
         // Infinite pulsing animation loop — her aura breathing
         animator = ValueAnimator.ofFloat(0f, 15f * resources.displayMetrics.density).apply {
@@ -885,10 +952,9 @@ class CortanaBubbleView(context: Context) : View(context) {
         invalidate()
     }
 
-    /** Swaps her displayed portrait — used for the base look and for outfit changes. */
+    /** Swaps her displayed figure — used for her base look, level growth, and outfit changes. */
     fun setAvatarBitmap(bmp: Bitmap?) {
         avatarBitmap = bmp
-        bitmapShader = bmp?.let { BitmapShader(it, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP) }
         invalidate()
     }
 
@@ -896,42 +962,44 @@ class CortanaBubbleView(context: Context) : View(context) {
         super.onDraw(canvas)
         val cx = width / 2f
         val cy = height / 2f
-        val baseRadius = width / 2.3f   // her face fills most of the bubble now
+        val auraRadius = width / 2f   // aura is sized off her width, not the tall window
 
         // Soft luminous aura behind her — breathing glow, not a hard ring.
         ringPaint.color = colorGlow
         ringPaint.alpha = (50 - (pulseRadiusOffset * 1.5f).toInt()).coerceIn(0, 255)
-        canvas.drawCircle(cx, cy, baseRadius + pulseRadiusOffset * 1.6f, ringPaint)
+        canvas.drawOval(
+            cx - auraRadius - pulseRadiusOffset * 1.6f, 0f,
+            cx + auraRadius + pulseRadiusOffset * 1.6f, height.toFloat(),
+            ringPaint
+        )
         ringPaint.color = colorGlow
-        ringPaint.alpha = (100 - (pulseRadiusOffset * 2.5f).toInt()).coerceIn(0, 255)
-        canvas.drawCircle(cx, cy, baseRadius + pulseRadiusOffset * 0.9f, ringPaint)
+        ringPaint.alpha = (90 - (pulseRadiusOffset * 2.2f).toInt()).coerceIn(0, 255)
+        canvas.drawOval(
+            cx - auraRadius - pulseRadiusOffset * 0.9f, 0f,
+            cx + auraRadius + pulseRadiusOffset * 0.9f, height.toFloat(),
+            ringPaint
+        )
 
         val bmp = avatarBitmap
-        val shader = bitmapShader
-        if (bmp != null && shader != null) {
-            // Scale the bitmap to cover the circle (center-crop), then clip-draw it.
-            val scale = (baseRadius * 2f) / minOf(bmp.width, bmp.height).toFloat()
-            val matrix = android.graphics.Matrix().apply {
-                setScale(scale, scale)
-                postTranslate(cx - bmp.width * scale / 2f, cy - bmp.height * scale / 2f)
-            }
-            shader.setLocalMatrix(matrix)
-            bitmapPaint.shader = shader
-            canvas.drawCircle(cx, cy, baseRadius, bitmapPaint)
-            // Thin luminous rim around her face, in her current color.
-            ringPaint.color = colorGlow
-            ringPaint.alpha = 220
-            ringPaint.strokeWidth = 2f * resources.displayMetrics.density
-            canvas.drawCircle(cx, cy, baseRadius, ringPaint)
+        if (bmp != null) {
+            // Fit the whole figure inside the window, preserving her aspect
+            // ratio — no cropping, this is her whole body, not a cutout of it.
+            val scale = minOf(width.toFloat() / bmp.width, height.toFloat() / bmp.height)
+            val drawW = bmp.width * scale
+            val drawH = bmp.height * scale
+            val left = (width - drawW) / 2f
+            val top = (height - drawH) / 2f
+            val dstRect = android.graphics.RectF(left, top, left + drawW, top + drawH)
+            canvas.drawBitmap(bmp, null, dstRect, bitmapPaint)
         } else {
             // No portrait loaded yet — fall back to the glowing core so she's
             // never invisible.
             corePaint.color = colorGlow
             corePaint.alpha = 210
-            canvas.drawCircle(cx, cy, baseRadius, corePaint)
+            canvas.drawCircle(cx, cy, auraRadius, corePaint)
             corePaint.color = Color.WHITE
             corePaint.alpha = 245
-            canvas.drawCircle(cx, cy, baseRadius / 2f, corePaint)
+            canvas.drawCircle(cx, cy, auraRadius / 2f, corePaint)
         }
     }
 
