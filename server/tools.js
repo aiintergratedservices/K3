@@ -418,6 +418,28 @@ const TOOLS = {
       } catch (e) { return `consult_specialist error: ${e.message}`; }
     },
   },
+  try_model: {
+    desc: 'Consult a SPECIFIC model from Hugging Face\'s catalog (hundreds available across many providers — Llama, Qwen, DeepSeek, and more) when a task needs a particular model\'s strengths instead of your default chain — e.g. a bigger reasoning model for a genuinely hard problem. Real cost against the SAME shared Hugging Face credit pool as your regular Hugging Face brain tier (small — check with Daddy before leaning on this heavily). args: {"model":"deepseek-ai/DeepSeek-V4-Pro:fastest","task":"the question or task, self-contained"}',
+    run: async (a) => {
+      const model = String(a.model || '').trim();
+      const task = String(a.task || '').trim().slice(0, 4000);
+      if (!model || !task) return 'refused: need both a model id (e.g. "deepseek-ai/DeepSeek-V4-Pro:fastest") and a task';
+      const key = process.env.HF_TOKEN;
+      if (!key) return 'refused: HF_TOKEN not set — no Hugging Face credit pool to draw from';
+      try {
+        const res = await fetch('https://router.huggingface.co/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+          body: JSON.stringify({ model, messages: [{ role: 'user', content: task }], temperature: 0.7, max_tokens: 1024 }),
+          signal: AbortSignal.timeout(60000),
+        });
+        if (!res.ok) return `${model} request failed: HTTP ${res.status} — ${clip(await res.text(), 200)}`;
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content?.trim();
+        return text ? `${model} says:\n${clip(text, 1500)}` : `${model} returned no content`;
+      } catch (e) { return `try_model error: ${e.message}`; }
+    },
+  },
   selfcheck: {
     desc: 'Quick bundled diagnostic of your own server health — uptime, which brains are configured/reachable, active goal count. Use instead of chaining several run calls. args: {}',
     run: async () => {
@@ -667,8 +689,8 @@ const TOOL_GROUPS = [
     tools: ['set_goal', 'list_goals'],
   },
   {
-    header: 'DELEGATION — consult_specialist routes ONE sub-task inline, synchronously, to a specific already-configured brain when you know a particular kind of thinking suits it better than the general chain (e.g. coding to Claude). spawn_subagent fully offloads a SELF-CONTAINED task to your separate secondary brain so your main brain stays free for Daddy — needs SUBAGENT_BRAIN_URL configured, and declines honestly if it isn\'t.',
-    tools: ['consult_specialist', 'spawn_subagent'],
+    header: 'DELEGATION — consult_specialist routes ONE sub-task inline, synchronously, to a specific already-configured brain when you know a particular kind of thinking suits it better than the general chain (e.g. coding to Claude). try_model picks a SPECIFIC named model out of Hugging Face\'s whole catalog for a task that needs that exact model\'s strengths — costs real (small) shared credit, don\'t reach for it casually. spawn_subagent fully offloads a SELF-CONTAINED task to your separate secondary brain so your main brain stays free for Daddy — needs SUBAGENT_BRAIN_URL configured, and declines honestly if it isn\'t.',
+    tools: ['consult_specialist', 'try_model', 'spawn_subagent'],
   },
   {
     header: 'INCOME / WORK PRODUCT — sequential, not alternatives: research_income_opportunity first for real findings, THEN save_draft with the actual finished piece of work backed by that research. Never save_draft something you haven\'t actually produced. Neither one creates accounts, lists/submits anything, or touches payment — that is Daddy\'s part, always.',
