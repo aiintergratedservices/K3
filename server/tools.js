@@ -107,6 +107,18 @@ const TOOLS = {
       return hits.length ? hits.join('\n') : '(no matching memories)';
     },
   },
+  list_flagged_claims: {
+    desc: 'See times you narrated a save/upgrade/learn WITHOUT actually calling a tool (caught automatically by groundClaims). Use this to find make-believe you can turn into reality — actually call write_skill or remember for each one that\'s worth keeping, or tell Daddy honestly it was just talk. args: {}',
+    run: async () => {
+      try {
+        const logPath = path.join(__dirname, '..', '.agent-memory', 'logs', 'knowledge.log');
+        const raw = fs.readFileSync(logPath, 'utf8');
+        const hits = raw.split('\n').filter((l) => l.includes('CAUGHT unverified growth claim')).slice(-15);
+        if (!hits.length) return '(none flagged — every save/upgrade you\'ve claimed so far was backed by a real tool call)';
+        return `${hits.length} flagged claim(s), most recent first:\n` + hits.reverse().join('\n');
+      } catch { return '(no log yet — nothing flagged)'; }
+    },
+  },
   run: {
     desc: 'Run a SAFE, read-only shell command (allowlisted only). args: {"command":"git status"}',
     run: async (a) => {
