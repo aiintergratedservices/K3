@@ -514,4 +514,12 @@ async function status() {
   };
 }
 
-module.exports = { chat, status, buildSystemPrompt, runToolLoop };
+module.exports = {
+  chat, status, buildSystemPrompt, runToolLoop,
+  // Individual providers — exported so consult_specialist (tools.js) can
+  // route a sub-task to one deliberately, instead of always going through
+  // the general fallback chain. Lazy-required by tools.js (inside the tool's
+  // run function, not at module top level) to avoid a circular-require
+  // ordering issue, since brain.js requires tools.js itself.
+  askClaude, askGemini, askGroq,
+};

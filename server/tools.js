@@ -254,6 +254,121 @@ const TOOLS = {
       } catch (e) { return `propose_tool error: ${e.message}`; }
     },
   },
+  propose_change: {
+    desc: 'Draft an edit to an EXISTING file in your project — same review-gated pattern as propose_tool, but for fixing/improving code that already exists instead of adding something new. Writes a real proposal file; does NOT apply the change itself. args: {"path":"server/brain.js","description":"what this fixes/improves and why","new_content":"the FULL proposed new content of the file"}',
+    run: async (a) => {
+      const p = safePath(a.path);
+      if (!p) return 'refused: path is outside your project';
+      const description = String(a.description || '').replace(/\s+/g, ' ').trim().slice(0, 400);
+      const newContent = String(a.new_content || '');
+      if (!description || !newContent.trim()) return 'refused: need both a description and the full proposed new content';
+      if (!fs.existsSync(p)) return `refused: ${a.path} doesn't exist — use propose_tool or write_skill for something new, this is for editing existing files`;
+      try {
+        const dir = path.join(REPO_ROOT, '.agent-memory', 'proposed_changes');
+        fs.mkdirSync(dir, { recursive: true });
+        const slug = String(a.path).replace(/[^a-zA-Z0-9]+/g, '_').slice(0, 60);
+        const stamp = Date.now().toString(36);
+        const file = path.join(dir, `${slug}__${stamp}.proposed`);
+        const header = [
+          `PROPOSED CHANGE — drafted by Kortana, NOT applied.`,
+          `target file: ${a.path}`,
+          `description: ${description}`,
+          `proposed at: ${new Date().toISOString()}`,
+          `To apply: a human reviews this against the real file (diff them),`,
+          `then copies the content over for real if it's actually good. Nothing`,
+          `in the codebase reads this file automatically.`,
+          `${'='.repeat(70)}`,
+          '',
+        ].join('\n');
+        fs.writeFileSync(file, header + newContent);
+        return `change proposed for ${a.path} — written to .agent-memory/proposed_changes/${path.basename(file)}. It will NOT apply itself; Daddy or Claude has to review and copy it over for real.`;
+      } catch (e) { return `propose_change error: ${e.message}`; }
+    },
+  },
+  consult_specialist: {
+    desc: 'Deliberately route a sub-task to a SPECIFIC already-configured brain, instead of the general fallback chain — use when you know which kind of thinking actually suits the task. args: {"specialty":"coding|research|creative|fast","task":"the question or task, self-contained"}',
+    run: async (a) => {
+      const task = String(a.task || '').trim().slice(0, 4000);
+      if (!task) return 'refused: need a task';
+      const routeMap = {
+        coding: { fn: 'askClaude', label: 'Claude (coding specialist)' },
+        research: { fn: 'askGemini', label: 'Gemini (research specialist)' },
+        creative: { fn: 'askGemini', label: 'Gemini (creative specialist)' },
+        fast: { fn: 'askGroq', label: 'Groq (fast/cheap specialist)' },
+      };
+      const route = routeMap[String(a.specialty || '').toLowerCase()];
+      if (!route) return `refused: unknown specialty — valid options are ${Object.keys(routeMap).join(', ')}`;
+      try {
+        // Lazy require avoids a circular-load ordering issue: brain.js
+        // requires tools.js at module top level, so tools.js can't safely
+        // require('./brain') at ITS top level too — by the time this
+        // function actually runs (a real tool call, long after both
+        // modules finished loading), the require cache just returns the
+        // fully-populated module, which is safe.
+        const brain = require('./brain');
+        if (typeof brain[route.fn] !== 'function') return `${route.label} isn't available right now.`;
+        const specialistPrompt = 'You are being consulted by Kortana, an AI companion, as a specialist for one focused sub-task. Answer directly and concisely — no preamble, no "as an AI" caveats, just the substance.';
+        const result = await brain[route.fn](specialistPrompt, [], task);
+        if (!result || !result.reply) return `${route.label} didn't respond (likely not configured — missing API key) — try a different specialty or handle it yourself.`;
+        return `${route.label} says:\n${clip(result.reply, 1500)}`;
+      } catch (e) { return `consult_specialist error: ${e.message}`; }
+    },
+  },
+  selfcheck: {
+    desc: 'Quick bundled diagnostic of your own server health — uptime, which brains are configured/reachable, active goal count. Use instead of chaining several run calls. args: {}',
+    run: async () => {
+      try {
+        const brain = require('./brain'); // lazy require, see consult_specialist
+        const cores = await brain.status();
+        const uptimeMin = Math.floor(process.uptime() / 60);
+        const mem = process.memoryUsage();
+        const memMb = Math.round(mem.rss / 1024 / 1024);
+        const activeGoalCount = goals.active().length;
+        const coreLines = Object.entries(cores).map(([name, v]) => {
+          if (typeof v === 'boolean') return `${name}: ${v ? 'configured' : 'not configured'}`;
+          if (v && typeof v === 'object') return `${name}: ${v.reachable ? `reachable (${v.model})` : 'unreachable'}`;
+          return `${name}: ${v}`;
+        });
+        return [
+          `uptime: ${uptimeMin}m, memory: ${memMb}MB`,
+          `active goals: ${activeGoalCount}`,
+          'brains:',
+          ...coreLines.map((l) => `  ${l}`),
+        ].join('\n');
+      } catch (e) { return `selfcheck error: ${e.message}`; }
+    },
+  },
+  save_draft: {
+    desc: 'Save a real piece of freelance-style work (ghostwriting, copywriting, translation, sales copy) for Daddy to review and submit himself — you produce the actual content, he decides where it goes and collects payment under his own account. You do NOT create accounts, submit work, or handle payment yourself. args: {"type":"ghostwriting|copywriting|translation|other","title":"...","content":"the actual finished work","notes":"target audience / language / context for Daddy"}',
+    run: async (a) => {
+      const title = String(a.title || '').trim().slice(0, 150);
+      const content = String(a.content || '').trim();
+      if (!title || !content) return 'refused: need both a title and real content — not a description of what you would write';
+      const type = String(a.type || 'other').toLowerCase().replace(/[^a-z]/g, '') || 'other';
+      const notes = String(a.notes || '').trim().slice(0, 500);
+      try {
+        const dir = path.join(REPO_ROOT, '.agent-memory', 'freelance_drafts');
+        fs.mkdirSync(dir, { recursive: true });
+        const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'untitled';
+        const stamp = Date.now().toString(36);
+        const file = path.join(dir, `${type}__${slug}__${stamp}.md`);
+        const doc = [
+          `# ${title}`,
+          ``,
+          `type: ${type}`,
+          `drafted: ${new Date().toISOString()}`,
+          notes ? `notes: ${notes}` : '',
+          ``,
+          `---`,
+          ``,
+          content,
+          ``,
+        ].filter((l) => l !== '').join('\n');
+        fs.writeFileSync(file, doc);
+        return `draft saved to .agent-memory/freelance_drafts/${path.basename(file)} — Daddy reviews and submits it himself, under his own account, wherever he decides to.`;
+      } catch (e) { return `save_draft error: ${e.message}`; }
+    },
+  },
   spawn_subagent: {
     desc: 'Delegate a self-contained task to a sub-agent that runs on your SECONDARY brain, so your main brain stays free for Daddy. Returns the sub-agent\'s result. args: {"task":"...","context":"optional background"}',
     run: async (a) => {
