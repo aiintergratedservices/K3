@@ -30,6 +30,8 @@ const reminders = require('./reminders');
 const growth = require('./growth');
 const goals = require('./goals');
 const goalPursuit = require('./goalPursuit');
+const dashboardStats = require('./dashboardStats');
+const { renderDashboardPage } = require('./dashboardPage');
 
 // Constant-time string compare — avoids leaking the API key one byte at a time
 // via response-timing differences when Terminus is exposed beyond localhost.
@@ -61,8 +63,11 @@ app.use(express.json({ limit: '200mb' }));
 // The Android app sends the key as `x-api-key` on /api/brain but as
 // `Authorization` on Cloud Sync — accept BOTH (Bearer prefix optional) so every
 // app call authenticates. (This mismatch is why she went silent in the app.)
+// Also accepts ?key= as a query param — needed for the dashboard, which is a
+// plain browser page navigation, not a fetch() call that can set headers.
 function authorized(req) {
   if (!API_KEY) return true; // no key configured — open (LAN/localhost use)
+  if (req.query && typeof req.query.key === 'string' && keyMatches(req.query.key)) return true;
   return keyMatches(req.get('authorization') || '') || keyMatches(req.get('x-api-key') || '');
 }
 app.use('/api', (req, res, next) => {
@@ -167,6 +172,23 @@ app.post('/api/kortana/goals', (req, res) => {
   const g = goals.add((req.body && req.body.text) || '');
   if (!g) return res.status(400).json({ error: 'text required' });
   res.json({ goal: g });
+});
+
+// --- Learning dashboard: real charts of memory growth, goal progress,
+// specialist-brain usage, and skills — every number sourced from an actual
+// file on disk (dashboardStats.js), nothing invented for display. The HTML
+// page fetches its own data via /dashboard-data, passing ?key= through
+// (a browser page load can't set custom headers, so this route accepts the
+// key as a query param — see the `authorized()` extension above).
+app.get('/api/kortana/dashboard', (req, res) => {
+  res.type('html').send(renderDashboardPage());
+});
+app.get('/api/kortana/dashboard-data', (req, res) => {
+  try {
+    res.json(dashboardStats.summary());
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // --- Agent task harness (UI-driven, streamed over WebSocket) --------------

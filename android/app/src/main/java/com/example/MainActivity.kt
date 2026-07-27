@@ -25,8 +25,11 @@ class MainActivity : ComponentActivity() {
     companion object {
         var isOverlayPermissionGranted = false
             private set
-            
+
         var isScreenCaptureAuthorized = false
+            private set
+
+        var isBatteryOptimizationExempt = false
             private set
     }
 
@@ -71,6 +74,41 @@ class MainActivity : ComponentActivity() {
             true
         }
         isScreenCaptureAuthorized = KortanaBubbleService.hasScreenCapturePermission()
+
+        val pm = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+        isBatteryOptimizationExempt = pm.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    /**
+     * The actual real fix for "the OS keeps turning her off": her floating
+     * bubble, always-listening voice, and screen-coach services are all real
+     * foreground services with persistent notifications — that's the correct
+     * pattern — but Android's battery optimization (Doze, and more
+     * aggressively on Samsung/Xiaomi/etc) can still kill them anyway unless
+     * this app is explicitly exempted. This is the one-time system prompt
+     * for that exemption. Her actual memory/goals/reflection all live on
+     * Terminus (always-on, independent of the phone) regardless — this only
+     * affects her ON-DEVICE presence: the bubble, listening, and coaching.
+     */
+    fun requestBatteryOptimizationExemption() {
+        val pm = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+        if (pm.isIgnoringBatteryOptimizations(packageName)) {
+            isBatteryOptimizationExempt = true
+            Toast.makeText(this, "Already exempt — the OS won't sleep her.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+            startActivity(intent)
+        } catch (e: Exception) {
+            // Some OEM builds (esp. Samsung/Xiaomi/Huawei) block this intent outright —
+            // send them to the general battery settings screen as a fallback.
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (e2: Exception) {
+                Toast.makeText(this, "Couldn't open battery settings — look for 'Battery' > 'Kortana' > 'Unrestricted' manually.", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     fun requestOverlayPermission() {

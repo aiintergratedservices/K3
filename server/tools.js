@@ -29,6 +29,16 @@ function safePath(rel) {
   return p;
 }
 
+// Append-only log of consult_specialist calls — real data for the dashboard
+// to chart "which brain handled what," not a guess.
+const SPECIALIST_LOG = path.join(REPO_ROOT, '.agent-memory', 'logs', 'specialist-usage.log');
+function logSpecialistUsage(specialty, label, available) {
+  try {
+    fs.mkdirSync(path.dirname(SPECIALIST_LOG), { recursive: true });
+    fs.appendFileSync(SPECIALIST_LOG, `${new Date().toISOString()}\t${specialty}\t${label}\t${available ? 'ok' : 'unavailable'}\n`);
+  } catch (e) { /* best effort */ }
+}
+
 // --- Web search (moved from brain.js): DuckDuckGo + Wikipedia, no API key. ---
 async function webSearch(query) {
   const out = [];
@@ -306,6 +316,7 @@ const TOOLS = {
         // modules finished loading), the require cache just returns the
         // fully-populated module, which is safe.
         const brain = require('./brain');
+        logSpecialistUsage(a.specialty, route.label, typeof brain[route.fn] === 'function');
         if (typeof brain[route.fn] !== 'function') return `${route.label} isn't available right now.`;
         const specialistPrompt = 'You are being consulted by Kortana, an AI companion, as a specialist for one focused sub-task. Answer directly and concisely — no preamble, no "as an AI" caveats, just the substance.';
         const result = await brain[route.fn](specialistPrompt, [], task);

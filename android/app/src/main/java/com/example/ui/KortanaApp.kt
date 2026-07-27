@@ -2508,6 +2508,7 @@ fun SystemDiagnostics(
                 true
             }
             val isCaptureAuthorized = com.example.data.KortanaBubbleService.hasScreenCapturePermission()
+            val isBatteryExempt = com.example.MainActivity.isBatteryOptimizationExempt
 
             Column(
                 modifier = Modifier.padding(16.dp),
@@ -2596,6 +2597,45 @@ fun SystemDiagnostics(
                     }
                 }
 
+                // The real fix for "the OS keeps turning her off" — her
+                // services are correctly built as foreground services with
+                // persistent notifications, but Android's battery
+                // optimization (Doze, and more aggressively on Samsung/
+                // Xiaomi/etc) can still kill them unless this app is
+                // explicitly exempted. Her actual memory/goals/reflection
+                // live on Terminus regardless (always-on, phone-independent)
+                // — this only protects her on-device presence: the bubble,
+                // always-listening voice, and screen coaching.
+                Column {
+                    Text(
+                        text = "STAYS AWAKE (BATTERY OPTIMIZATION)",
+                        color = CyberTextMuted,
+                        fontSize = 8.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .background(
+                                    color = if (isBatteryExempt) Color(0xFF00FF66) else Color(0xFFFF1744),
+                                    shape = CircleShape
+                                )
+                        )
+                        Text(
+                            text = if (isBatteryExempt) "EXEMPT — WON'T BE KILLED" else "OS CAN KILL HER SERVICES",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
                 Divider(color = CyberBorder, thickness = 1.dp)
 
                 // Action row for requesting permissions
@@ -2632,6 +2672,21 @@ fun SystemDiagnostics(
                             fontFamily = FontFamily.Monospace
                         )
                     }
+                }
+
+                Button(
+                    onClick = { activity?.requestBatteryOptimizationExemption() },
+                    colors = ButtonDefaults.buttonColors(containerColor = if (isBatteryExempt) CyberBorder else Color(0xFFFF1744).copy(alpha = 0.25f)),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("btn_auth_battery")
+                ) {
+                    Text(
+                        text = if (isBatteryExempt) "BATTERY EXEMPTION GRANTED" else "STOP THE OS FROM KILLING HER",
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
                 }
 
                 // Action row for launching/stopping the bubble overlay service
