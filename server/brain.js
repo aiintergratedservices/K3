@@ -173,21 +173,35 @@ function loadSkills() {
 // Ordered list of installed models to try: preferred (often larger/better)
 // first, but EVERY installed model is kept as a fallback so one that OOMs on a
 // small device degrades to a smaller one instead of dropping her offline.
+//
+// Cached with a short TTL — on a cloud host (Render) nothing local ever
+// answers at OLLAMA_URL, so without this every single message paid a real
+// ~4s tax hitting a check that was always going to fail, before ever
+// reaching a cloud brain that would've answered instantly. A successful
+// check is cached too, but briefly enough that starting Ollama locally
+// (Termux, a dev box) gets picked back up within a minute on its own — no
+// restart, no manual step, she just notices.
+let ollamaCache = { models: [], checkedAt: 0 };
+const OLLAMA_CACHE_MS = 45000;
+
 async function listOllamaModels() {
+  if (Date.now() - ollamaCache.checkedAt < OLLAMA_CACHE_MS) return ollamaCache.models;
+  let models = [];
   try {
     const res = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(4000) });
-    if (!res.ok) return [];
-    const installed = ((await res.json()).models || []).map((m) => m.name).filter(Boolean);
-    const ordered = [];
-    for (const p of PREFERRED_MODELS) {
-      const hit = installed.find((i) => i.startsWith(p) && !ordered.includes(i));
-      if (hit) ordered.push(hit);
+    if (res.ok) {
+      const installed = ((await res.json()).models || []).map((m) => m.name).filter(Boolean);
+      const ordered = [];
+      for (const p of PREFERRED_MODELS) {
+        const hit = installed.find((i) => i.startsWith(p) && !ordered.includes(i));
+        if (hit) ordered.push(hit);
+      }
+      for (const i of installed) if (!ordered.includes(i)) ordered.push(i);
+      models = ordered;
     }
-    for (const i of installed) if (!ordered.includes(i)) ordered.push(i);
-    return ordered;
-  } catch {
-    return [];
-  }
+  } catch { /* unreachable — cached as empty below, retried after TTL */ }
+  ollamaCache = { models, checkedAt: Date.now() };
+  return models;
 }
 
 // The single model she'd try first — used by status()/health.
@@ -475,8 +489,20 @@ function providerChain(message) {
   return [askOllama, ...FREE_CORES, askClaude, askOpenAI];
 }
 
+// Hard ceiling on the WHOLE chain, not just each provider — trying several
+// slow/failing providers back-to-back (each individually allowed up to
+// 60-90s) could add up to well past what the phone's own client is willing
+// to wait on a single request, so it gives up and falls through to a local
+// Ollama that was never there, landing on canned offline phrases instead of
+// a real reply. This stops trying NEW providers once the budget's spent,
+// so a bad chain fails fast to the rules core instead of stalling for
+// minutes — well under the phone's own request timeout.
+const CHAIN_DEADLINE_MS = 40000;
+
 async function askChain(chain, systemPrompt, history, message) {
+  const deadline = Date.now() + CHAIN_DEADLINE_MS;
   for (const ask of chain) {
+    if (Date.now() > deadline) break;
     const r = await ask(systemPrompt, history, message);
     if (r) return r;
   }
