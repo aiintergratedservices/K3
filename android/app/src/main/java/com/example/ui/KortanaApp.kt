@@ -109,10 +109,16 @@ fun KortanaApp(
     var selectedImageBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var selectedImageBase64 by remember { mutableStateOf<String?>(null) }
 
-    // Direct Audio Recorder States
-    var mediaRecorder by remember { mutableStateOf<android.media.MediaRecorder?>(null) }
+    // Direct Voice Recorder — REAL speech-to-text now, not raw audio upload.
+    // This used to record raw audio and ship the undecoded bytes to the
+    // brain with a "process this audio data" prompt — no model in this
+    // pipeline can actually parse raw 3gp audio, so it silently fabricated
+    // tone/vibe-based responses instead of ever hearing actual words. Fixed
+    // by using Android's on-device SpeechRecognizer for real transcription —
+    // same underlying capability as the "STT" fallback button, just wired to
+    // this button's press/TRANSMIT/cancel flow instead of a popup dialog.
     var isRecordingAudio by remember { mutableStateOf(false) }
-    var audioOutputFile by remember { mutableStateOf<java.io.File?>(null) }
+    var speechRecognizer by remember { mutableStateOf<android.speech.SpeechRecognizer?>(null) }
 
     var hasAudioPermission by remember {
         mutableStateOf(
@@ -134,86 +140,83 @@ fun KortanaApp(
         }
     }
 
+    fun buildRecognitionListener(onFinalText: (String) -> Unit) = object : android.speech.RecognitionListener {
+        override fun onReadyForSpeech(params: android.os.Bundle?) { voiceStatusText = "Listening..." }
+        override fun onBeginningOfSpeech() { voiceStatusText = "Hearing you..." }
+        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onBufferReceived(buffer: ByteArray?) {}
+        override fun onEndOfSpeech() { voiceStatusText = "Processing speech..." }
+        override fun onError(error: Int) {
+            voiceStatusText = "Voice input error ($error)"
+            isRecordingAudio = false
+        }
+        override fun onResults(results: android.os.Bundle?) {
+            val text = results
+                ?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
+                ?.firstOrNull().orEmpty()
+            isRecordingAudio = false
+            if (text.isNotBlank()) onFinalText(text) else voiceStatusText = "Didn't catch that"
+        }
+        override fun onPartialResults(partialResults: android.os.Bundle?) {
+            val text = partialResults
+                ?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
+                ?.firstOrNull()
+            if (!text.isNullOrBlank()) voiceStatusText = "\"$text\""
+        }
+        override fun onEvent(eventType: Int, params: android.os.Bundle?) {}
+    }
+
     val startRecordingAudio = {
         if (!hasAudioPermission) {
             audioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+        } else if (!android.speech.SpeechRecognizer.isRecognitionAvailable(context)) {
+            voiceStatusText = "No speech recognizer on this device"
         } else {
             try {
-                // Ensure any previous recorder is released
-                mediaRecorder?.release()
-                
-                val file = java.io.File(context.cacheDir, "kortana_voice_${System.currentTimeMillis()}.3gp")
-                audioOutputFile = file
-                
-                val recorder = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                    android.media.MediaRecorder(context)
-                } else {
-                    @Suppress("DEPRECATION")
-                    android.media.MediaRecorder()
+                speechRecognizer?.destroy()
+                val recognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(context)
+                recognizer.setRecognitionListener(buildRecognitionListener { finalText ->
+                    viewModel.sendMessage(finalText, selectedImageBase64)
+                    selectedImageBitmap = null
+                    selectedImageBase64 = null
+                })
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 }
-                
-                recorder.setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
-                recorder.setOutputFormat(android.media.MediaRecorder.OutputFormat.THREE_GPP)
-                recorder.setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AMR_NB)
-                recorder.setOutputFile(file.absolutePath)
-                recorder.prepare()
-                recorder.start()
-                
-                mediaRecorder = recorder
+                recognizer.startListening(intent)
+                speechRecognizer = recognizer
                 isRecordingAudio = true
-                voiceStatusText = "Recording Synapse Voice..."
+                voiceStatusText = "Listening..."
             } catch (e: Exception) {
                 voiceStatusText = "Vocal link error: ${e.localizedMessage}"
-                mediaRecorder = null
                 isRecordingAudio = false
             }
         }
     }
 
     val stopAndSendRecordingAudio = {
-        val recorder = mediaRecorder
-        val file = audioOutputFile
-        if (recorder != null && file != null && isRecordingAudio) {
-            try {
-                recorder.stop()
-                recorder.release()
-                mediaRecorder = null
-                isRecordingAudio = false
-                voiceStatusText = "Transmitting voice stream..."
-                
-                val bytes = file.readBytes()
-                val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                if (base64.isNotEmpty()) {
-                    viewModel.sendMessage(
-                        messageText = "Verbal synaptic link received. Process this audio data to understand my social dynamics, progress, or tasks.",
-                        imageBase64 = base64,
-                        mimeType = "audio/3gpp"
-                    )
-                } else {
-                    voiceStatusText = "Vocal link blank"
-                }
-            } catch (e: Exception) {
-                voiceStatusText = "Transmission failed"
-                try {
-                    recorder.release()
-                } catch (re: Exception) {}
-                mediaRecorder = null
-                isRecordingAudio = false
-            }
+        // Stopping tells the recognizer to finalize — onResults fires next
+        // and is what actually sends the transcribed text (see
+        // buildRecognitionListener's onFinalText callback above).
+        try {
+            speechRecognizer?.stopListening()
+            voiceStatusText = "Transmitting..."
+        } catch (e: Exception) {
+            voiceStatusText = "Transmission failed"
+            isRecordingAudio = false
         }
     }
 
     val cancelRecordingAudio = {
-        val recorder = mediaRecorder
-        if (recorder != null) {
-            try {
-                recorder.stop()
-                recorder.release()
-            } catch (e: Exception) {}
-            mediaRecorder = null
-            isRecordingAudio = false
-            voiceStatusText = "Vocal link cancelled"
-        }
+        try {
+            speechRecognizer?.cancel()
+            speechRecognizer?.destroy()
+        } catch (e: Exception) {}
+        speechRecognizer = null
+        isRecordingAudio = false
+        voiceStatusText = "Vocal link cancelled"
     }
 
     fun bitmapToBase64(bitmap: Bitmap): String {
@@ -299,6 +302,8 @@ fun KortanaApp(
         onDispose {
             obj.stop()
             obj.shutdown()
+            speechRecognizer?.destroy()
+            speechRecognizer = null
         }
     }
 
