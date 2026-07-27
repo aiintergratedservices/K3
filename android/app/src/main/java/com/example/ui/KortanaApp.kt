@@ -63,6 +63,14 @@ import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -3835,6 +3843,181 @@ fun SystemDiagnostics(
                             uncheckedTrackColor = CyberBorder
                         )
                     )
+                }
+
+                // --- INCOME OPS ---
+                // Real visibility into her passive/freelance-income tools
+                // (research_income_opportunity, save_draft, set_goal) —
+                // until now, anything she produced there only ever showed up
+                // on the web dashboard, never in the app, so there was no
+                // way to tell from the phone whether she'd done anything at
+                // all. Same data as GET /api/kortana/dashboard-data, and the
+                // button below registers a real goal via POST /api/kortana/
+                // goals — deterministic, doesn't depend on a brain being
+                // reachable, and her background pursuit cycle (~every 30
+                // min) picks it up and actually works it from there.
+                val incomeScope = rememberCoroutineScope()
+                val incomeClient = remember { OkHttpClient() }
+                var incomeGoals by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+                var incomeDrafts by remember { mutableStateOf<List<String>>(emptyList()) }
+                var incomeResearchFiles by remember { mutableStateOf<List<String>>(emptyList()) }
+                var incomeLoading by remember { mutableStateOf(false) }
+                var incomeError by remember { mutableStateOf<String?>(null) }
+                var incomeLoadedOnce by remember { mutableStateOf(false) }
+
+                fun refreshIncomeOps() {
+                    val base = cloudUrl.substringBefore("/api/").trimEnd('/')
+                    if (base.isBlank()) { incomeError = "set your Cloud Server URL first"; return }
+                    incomeLoading = true
+                    incomeError = null
+                    incomeScope.launch {
+                        try {
+                            val data = withContext(Dispatchers.IO) {
+                                val url = "$base/api/kortana/dashboard-data" +
+                                    (if (apiKey.isNotBlank()) "?key=${java.net.URLEncoder.encode(apiKey, "UTF-8")}" else "")
+                                val reqBuilder = Request.Builder().url(url).get()
+                                if (apiKey.isNotBlank()) reqBuilder.addHeader("x-api-key", apiKey)
+                                incomeClient.newCall(reqBuilder.build()).execute().use { resp ->
+                                    if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code}")
+                                    JSONObject(resp.body?.string() ?: "{}")
+                                }
+                            }
+                            val goalsArr = data.optJSONObject("goals")?.optJSONArray("list") ?: JSONArray()
+                            val incomeKeywords = listOf("income", "money", "fund", "freelance", "gig", "sell", "revenue", "$")
+                            val goalsList = mutableListOf<Pair<String, String>>()
+                            for (i in 0 until goalsArr.length()) {
+                                val g = goalsArr.getJSONObject(i)
+                                val text = g.optString("text", "")
+                                if (incomeKeywords.any { text.contains(it, ignoreCase = true) }) {
+                                    goalsList.add(text to g.optString("status", "?"))
+                                }
+                            }
+                            val draftsArr = data.optJSONArray("freelanceDrafts") ?: JSONArray()
+                            val research = data.optJSONArray("incomeResearch") ?: JSONArray()
+                            incomeGoals = goalsList
+                            incomeDrafts = (0 until draftsArr.length()).map { draftsArr.getJSONObject(it).optString("filename") }
+                            incomeResearchFiles = (0 until research.length()).map { research.getJSONObject(it).optString("filename") }
+                            incomeLoadedOnce = true
+                        } catch (e: Exception) {
+                            incomeError = "couldn't reach Terminus: ${e.message}"
+                        } finally {
+                            incomeLoading = false
+                        }
+                    }
+                }
+
+                LaunchedEffect(cloudUrl, apiKey) { refreshIncomeOps() }
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = CyberSpace),
+                    border = BorderStroke(1.dp, CyberBorder),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "INCOME OPS",
+                                color = activeColor,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            TextButton(onClick = { refreshIncomeOps() }) {
+                                Text(
+                                    text = if (incomeLoading) "..." else "REFRESH",
+                                    color = CyberTextMuted, fontSize = 9.sp, fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                        Text(
+                            text = "Real drafts (ghostwriting/copy/translation/products) and research she's actually produced — same data as the web dashboard, surfaced here so you don't have to leave the app to check.",
+                            color = CyberTextMuted,
+                            fontSize = 9.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+
+                        incomeError?.let {
+                            Text(text = it, color = NeonPink, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+                        }
+                        if (incomeError == null && incomeLoadedOnce) {
+                            Text(
+                                text = "${incomeDrafts.size} draft(s) ready to review · ${incomeResearchFiles.size} research report(s) · ${incomeGoals.size} income-related goal(s)",
+                                color = Color.White,
+                                fontSize = 9.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            if (incomeGoals.isEmpty() && incomeDrafts.isEmpty() && incomeResearchFiles.isEmpty()) {
+                                Text(
+                                    text = "Nothing yet — she only starts on this once a real goal tells her to. Tap below to actually kick it off.",
+                                    color = CyberTextMuted,
+                                    fontSize = 9.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            } else {
+                                incomeGoals.take(3).forEach { (text, status) ->
+                                    Text(text = "• [$status] ${text.take(80)}", color = Color.White, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+                                }
+                                incomeDrafts.take(3).forEach { f ->
+                                    Text(text = "• draft: $f", color = NeonGreen, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+                                }
+                                incomeResearchFiles.take(3).forEach { f ->
+                                    Text(text = "• research: $f", color = NeonAmber, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+                                }
+                                Text(
+                                    text = "Full files at ${cloudUrl.substringBefore("/api/").trimEnd('/')}/api/kortana/dashboard",
+                                    color = CyberTextMuted,
+                                    fontSize = 8.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                val base = cloudUrl.substringBefore("/api/").trimEnd('/')
+                                if (base.isBlank()) { incomeError = "set your Cloud Server URL first"; return@Button }
+                                incomeScope.launch {
+                                    try {
+                                        withContext(Dispatchers.IO) {
+                                            val body = JSONObject()
+                                                .put(
+                                                    "text",
+                                                    "Research a real, specific passive or freelance income opportunity and pursue it — produce an actual draft or finding, not just a plan."
+                                                )
+                                                .toString()
+                                                .toRequestBody("application/json; charset=utf-8".toMediaType())
+                                            val reqBuilder = Request.Builder().url("$base/api/kortana/goals").post(body)
+                                            if (apiKey.isNotBlank()) reqBuilder.addHeader("x-api-key", apiKey)
+                                            incomeClient.newCall(reqBuilder.build()).execute().use { resp ->
+                                                if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code}")
+                                            }
+                                        }
+                                        refreshIncomeOps()
+                                    } catch (e: Exception) {
+                                        incomeError = "couldn't register goal: ${e.message}"
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = activeColor.copy(alpha = 0.2f))
+                        ) {
+                            Text(
+                                text = "REGISTER A REAL INCOME GOAL NOW",
+                                color = activeColor, fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Text(
+                            text = "Registers a real goal via POST /api/kortana/goals — her background pursuit cycle (every ~30 min) then actually works it using research_income_opportunity/save_draft. Nothing here creates accounts, lists anything for sale, or touches payment — that stays yours.",
+                            color = CyberTextMuted,
+                            fontSize = 8.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
                 }
 
                 // Display latency / telemetry info
