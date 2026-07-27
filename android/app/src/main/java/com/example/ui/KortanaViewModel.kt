@@ -423,10 +423,30 @@ class KortanaViewModel(application: Application) : AndroidViewModel(application)
             viewModelScope.launch {
                 try {
                     val payload = repository.exportPayload()
+                    val jsonStr = KortanaCloudSyncClient.serializePayloadToString(payload)
+                    val byteCount = jsonStr.toByteArray(Charsets.UTF_8).size.toLong()
                     val service = KortanaCloudSyncClient.createService(s.cloudServerUrl)
-                    service.uploadPayload(s.cloudServerUrl, s.cloudApiKey, payload)
+                    val response = service.uploadPayload(s.cloudServerUrl, s.cloudApiKey, payload)
+                    if (response.isSuccessful) {
+                        // This was the actual hole: auto-sync used to succeed
+                        // or fail with zero trace anywhere — no log, no
+                        // telemetry update, nothing — so "auto-sync: ON" gave
+                        // false confidence for a backup that had never once
+                        // worked. Now every auto-sync updates the same
+                        // LAST SYNC CYCLE telemetry the manual Backup button
+                        // does, so a real success is visible, not assumed.
+                        repository.updateSyncTelemetry(byteCount, System.currentTimeMillis())
+                        _syncStatus.value = "SUCCESS"
+                        _syncErrorMessage.value = null
+                    } else {
+                        android.util.Log.w("KortanaAutoSync", "auto-sync HTTP ${response.code()} to ${s.cloudServerUrl}")
+                        _syncStatus.value = "ERROR"
+                        _syncErrorMessage.value = "Auto-sync failed: HTTP ${response.code()}"
+                    }
                 } catch (e: Exception) {
-                    // Silent background log
+                    android.util.Log.w("KortanaAutoSync", "auto-sync failed: ${e.message}", e)
+                    _syncStatus.value = "ERROR"
+                    _syncErrorMessage.value = "Auto-sync failed: ${e.localizedMessage ?: e.message}"
                 }
             }
         }
