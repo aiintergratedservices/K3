@@ -32,7 +32,13 @@ object KortanaCoach {
     private const val K_ENABLED = "enabled"
     private const val K_BASE = "base"
     private const val K_KEY = "apiKey"
-    private const val CHANNEL = "kortana_coach"
+    // v2: bumped from "kortana_coach" — a NotificationChannel's importance is
+    // locked in the FIRST time Android creates it and the app can never
+    // downgrade it afterward (by design, so apps can't silently re-enable
+    // sound a user turned off). Anyone who already has this service running
+    // got the old IMPORTANCE_DEFAULT channel baked in; a new channel ID is
+    // the only way this fix actually takes effect for them.
+    private const val CHANNEL = "kortana_coach_v2"
     private const val NOTIF_ID = 4310
     private const val MIN_INTERVAL_MS = 25_000L   // don't nag more than ~once every 25s
 
@@ -116,8 +122,13 @@ object KortanaCoach {
     private fun notify(context: Context, tip: String) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            val ch = NotificationChannel(CHANNEL, "Kortana coaching", NotificationManager.IMPORTANCE_DEFAULT)
-            ch.description = "Proactive tips while you work"
+            // LOW, not DEFAULT — this can fire as often as every ~25s while
+            // you're just using your phone with co-pilot on. A ding on every
+            // screen change is a nag, not a "your turn" signal (that's what
+            // KortanaAttention.kt's separate DEFAULT-importance channel is
+            // for — pending proposals / blocked goals, real and rare).
+            val ch = NotificationChannel(CHANNEL, "Kortana coaching", NotificationManager.IMPORTANCE_LOW)
+            ch.description = "Proactive tips while you work — silent by design, shows in the shade only"
             nm.createNotificationChannel(ch)
         }
         val n = NotificationCompat.Builder(context, CHANNEL)
@@ -125,7 +136,7 @@ object KortanaCoach {
             .setContentTitle("Kortana 👀")
             .setContentText(tip)
             .setStyle(NotificationCompat.BigTextStyle().bigText(tip))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setAutoCancel(true)
             .build()
         try {
