@@ -14,8 +14,17 @@
 // to whatever mesh is loaded, so swapping in a real Kortana mesh later is a
 // one-line path change, not a rewrite.
 
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+// Plain relative-path imports on purpose, not the bare 'three' specifier via
+// the <script type="importmap"> that used to be in index.html: import maps
+// only landed in Android System WebView around Chrome 105 (2022), so on an
+// older/frozen WebView (common — not every device auto-updates it) the bare
+// specifier fails to resolve, the whole module graph throws, and NOTHING
+// renders — a real, hard-to-diagnose blank-screen bug with no visible error
+// (this is what happened on first real-device test: the 3D viewport came up
+// solid black). Relative paths need zero WebView feature beyond `type=
+// "module"` itself, which every real Android device has supported for years.
+import * as THREE from './three/three.module.js';
+import { GLTFLoader } from './three/addons/loaders/GLTFLoader.js';
 import { createKortanaMaterial } from './shader.js';
 
 const scene = new THREE.Scene();

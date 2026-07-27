@@ -2,7 +2,8 @@
 // between her opal-white base and a luminous accent color (adjustable at
 // runtime via setGlowColor, matching her Iridescent Violet / Moonlight
 // Silver / Opal Gold palette from the app's color picker).
-import * as THREE from 'three';
+// Relative path, not the bare 'three' specifier — see scene.js for why.
+import * as THREE from './three/three.module.js';
 
 export function createKortanaMaterial() {
     return new THREE.ShaderMaterial({

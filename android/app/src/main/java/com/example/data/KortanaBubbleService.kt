@@ -170,7 +170,14 @@ class KortanaBubbleService : Service() {
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             layoutType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            // FLAG_HARDWARE_ACCELERATED matters here specifically: unlike an
+            // Activity window (hardware-accelerated by default), a manually
+            // added system overlay window is NOT — without this flag the
+            // WebView's WebGL canvas has no GPU surface to draw into, so the
+            // 3D avatar silently renders nothing in the floating bubble.
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START

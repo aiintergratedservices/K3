@@ -735,31 +735,57 @@ fun Kortana3DView(
     modifier: Modifier = Modifier
 ) {
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    // Surfaced ON-DEVICE, not just Logcat — there is no adb access to a real
+    // user's phone, so a JS failure that only logs quietly is a failure no
+    // one can ever diagnose. A blank 3D viewport with no visible reason is
+    // exactly the bug this caught the first time this pipeline ran on a real
+    // device (bare 'three' import specifier, unsupported on older WebView —
+    // fixed in scene.js/shader.js — but the NEXT unknown failure needs to be
+    // visible here too, not just guessed at from a screenshot again).
+    var lastError by remember { mutableStateOf<String?>(null) }
 
-    AndroidView(
-        modifier = modifier,
-        factory = { context ->
-            WebView(context).apply {
-                setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                settings.allowFileAccess = true
-                settings.allowContentAccess = true
-                @Suppress("DEPRECATION")
-                settings.allowFileAccessFromFileURLs = true
-                @Suppress("DEPRECATION")
-                settings.allowUniversalAccessFromFileURLs = true
-                webChromeClient = object : WebChromeClient() {
-                    override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
-                        Log.d("Kortana3DView", "[kortana3d] ${msg.message()} (${msg.sourceId()}:${msg.lineNumber()})")
-                        return true
+    Box(modifier = modifier) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { context ->
+                WebView(context).apply {
+                    setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.allowFileAccess = true
+                    settings.allowContentAccess = true
+                    @Suppress("DEPRECATION")
+                    settings.allowFileAccessFromFileURLs = true
+                    @Suppress("DEPRECATION")
+                    settings.allowUniversalAccessFromFileURLs = true
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
+                            Log.d("Kortana3DView", "[kortana3d] ${msg.message()} (${msg.sourceId()}:${msg.lineNumber()})")
+                            if (msg.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                                lastError = "${msg.message()} (${msg.sourceId().substringAfterLast('/')}:${msg.lineNumber()})"
+                            }
+                            return true
+                        }
                     }
+                    loadUrl("file:///android_asset/kortana3d/index.html")
+                    webViewRef = this
                 }
-                loadUrl("file:///android_asset/kortana3d/index.html")
-                webViewRef = this
             }
+        )
+
+        lastError?.let { err ->
+            Text(
+                text = "3D VIEWER ERROR:\n$err",
+                color = Color(0xFFFF4444),
+                fontSize = 9.sp,
+                fontFamily = FontFamily.Monospace,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(12.dp)
+            )
         }
-    )
+    }
 
     // Keep her glow in sync with the active theme color — the same shader
     // uniform the floating bubble drives.
