@@ -45,6 +45,10 @@ always-on hosting options (no card required).
 
 ## What she can do
 - **Brain chain** with tool use (web search/fetch, safe read-only shell, memory).
+- **Real SQLite database** she can create tables in and query (`db_query`/
+  `db_execute`/`db_tables`) — one sandboxed file, no path she can point
+  elsewhere. Better than a JSON file for anything she wants to filter or
+  aggregate (income leads, goal history, etc).
 - **Writes her own skills** as she needs them (`.agent-memory/skills/`), loaded
   into her prompt automatically.
 - **Spawns sub-agents** for delegated tasks, routed to a secondary brain so they

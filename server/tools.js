@@ -20,6 +20,7 @@ const executor = require('./executor');
 const reminders = require('./reminders');
 const goals = require('./goals');
 const documents = require('./documents');
+const database = require('./database');
 
 const clip = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
 
@@ -606,6 +607,33 @@ const TOOLS = {
       const hours = Math.floor((Math.abs(ms) % 86400000) / 3600000);
       const label = a.label ? String(a.label) : 'then';
       return ms < 0 ? `${days}d ${hours}h since ${label}` : `${days}d ${hours}h until ${label}`;
+    },
+  },
+  db_tables: {
+    desc: 'List the tables you\'ve created in your real SQLite database (with their schema), so you can orient before writing SQL. args: {}',
+    run: async () => {
+      try {
+        const t = database.listTables();
+        return t.length ? t.map((x) => `${x.name}: ${x.sql}`).join('\n') : '(no tables yet — create one with db_execute)';
+      } catch (e) { return `db_tables error: ${e.message}`; }
+    },
+  },
+  db_query: {
+    desc: 'Run a read-only SQL SELECT against your own sandboxed SQLite database (structured data — better than a JSON file for records you want to filter/aggregate). args: {"sql":"SELECT * FROM income_leads WHERE status = ?","params":["open"]}',
+    run: async (a) => {
+      try {
+        const rows = database.query(String(a.sql || ''), Array.isArray(a.params) ? a.params : []);
+        return rows.length ? clip(JSON.stringify(rows), 1500) : '(no rows)';
+      } catch (e) { return `db_query error: ${e.message}`; }
+    },
+  },
+  db_execute: {
+    desc: 'Run a write against your own sandboxed SQLite database: CREATE/ALTER/DROP TABLE, INSERT/UPDATE/DELETE. args: {"sql":"INSERT INTO income_leads (source, amount, status) VALUES (?, ?, ?)","params":["upwork", 250.5, "open"]}',
+    run: async (a) => {
+      try {
+        const r = database.execute(String(a.sql || ''), Array.isArray(a.params) ? a.params : []);
+        return `ok — changes: ${r.changes}, lastInsertRowid: ${r.lastInsertRowid}`;
+      } catch (e) { return `db_execute error: ${e.message}`; }
     },
   },
 };

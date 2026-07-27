@@ -19,17 +19,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -63,6 +57,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.viewinterop.AndroidView
+import android.webkit.ConsoleMessage
+import android.webkit.WebChromeClient
+import android.webkit.WebView
 import java.io.ByteArrayOutputStream
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -76,12 +75,6 @@ fun KortanaApp(
     val chatHistory by viewModel.chatHistory.collectAsStateWithLifecycle()
     val visibleChatHistory = remember(chatHistory) {
         chatHistory.filter { !(it.sender == "USER" && it.message.startsWith("[")) }
-    }
-    val lastKortanaMessage = remember(chatHistory) {
-        chatHistory.lastOrNull { it.sender == "KORTANA" }
-    }
-    val lastMessageAnalysis = remember(lastKortanaMessage) {
-        lastKortanaMessage?.let { analyzeMessage(it.message) } ?: MessageAnalysis(SentimentType.NEUTRAL, 0.2f)
     }
     val personality by viewModel.personality.collectAsStateWithLifecycle()
     val synapticScripts by viewModel.synapticScripts.collectAsStateWithLifecycle()
@@ -514,11 +507,14 @@ fun KortanaApp(
                 .padding(innerPadding)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Top Half: Animated Interactive 3D Core
+                // Top: her real rigged 3D presence — the same WebView+Three.js
+                // viewer as the floating bubble (assets/kortana3d/), not the
+                // old flat cosmetic hologram. Given a smaller share of the
+                // screen than before so the chat window below gets more room.
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
+                        .weight(0.8f)
                         .background(
                             Brush.verticalGradient(
                                 colors = listOf(CyberSpace, CyberCard.copy(alpha = 0.5f))
@@ -526,22 +522,19 @@ fun KortanaApp(
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    KortanaHologramCore(
+                    Kortana3DView(
                         activeColor = activeColor,
                         isGenerating = isGenerating,
-                        energy = state?.energy ?: 100,
-                        intensity = state?.holographicIntensity ?: 1.0f,
-                        analysis = lastMessageAnalysis
+                        modifier = Modifier.fillMaxSize()
                     )
-
-                    // (removed cosmetic CHASSIS MODE / COGNITIVE CHARGE telemetry overlay)
                 }
 
-                // Lower Half: Status & Interaction tabs
+                // Lower: Status & Interaction tabs — expanded relative to the
+                // 3D view above so the chat log has real breathing room.
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1.3f)
+                        .weight(1.6f)
                         .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
                         .background(CyberCard)
                         .border(
@@ -729,298 +722,58 @@ fun KortanaApp(
     }
 }
 
-// --- Sentiment & Complexity Analysis Helpers for Hologram Chassis Reaction ---
-
-enum class SentimentType {
-    POSITIVE,
-    NEGATIVE,
-    NEUTRAL
-}
-
-data class MessageAnalysis(
-    val sentiment: SentimentType,
-    val complexity: Float // 0.1f to 1.0f
-)
-
-fun analyzeMessage(text: String): MessageAnalysis {
-    val lowerText = text.lowercase()
-    
-    // Sentiment word lists
-    val positiveWords = listOf(
-        "happy", "joy", "excited", "love", "wonderful", "success", "great", "excellent", "correct",
-        "yes", "amazing", "glad", "beautiful", "perfect", "achieved", "accomplished", "proud", "delighted",
-        "thrilled", "fantastic", "awesome", "optimum", "optimal", "synchronized", "harmony", "warm", "charm",
-        "smart", "intelligent", "pleasure", "welcome", "gladly", "capable"
-    )
-    
-    val negativeWords = listOf(
-        "sorry", "sad", "fail", "error", "bad", "wrong", "no", "difficult", "struggle", "pain",
-        "warning", "unexpected", "issue", "crash", "bug", "damaged", "offline", "unstable", "critical",
-        "hazard", "danger", "alert", "anxious", "frustrated", "concern", "compromised", "fear", "failure"
-    )
-    
-    var posScore = 0
-    var negScore = 0
-    
-    positiveWords.forEach { word ->
-        if (lowerText.contains(word)) posScore++
-    }
-    
-    negativeWords.forEach { word ->
-        if (lowerText.contains(word)) negScore++
-    }
-    
-    val sentiment = when {
-        posScore > negScore -> SentimentType.POSITIVE
-        negScore > posScore -> SentimentType.NEGATIVE
-        else -> SentimentType.NEUTRAL
-    }
-    
-    // Complexity calculations
-    val wordCount = text.split(Regex("\\s+")).filter { it.isNotBlank() }.size
-    val hasCodeBlocks = text.contains("```") || text.contains("{") || text.contains("}")
-    val mathSymbolsCount = text.count { it in listOf('+', '-', '*', '/', '=', '<', '>', '%', '^', '&', '|') }
-    val avgWordLength = if (wordCount > 0) text.replace(" ", "").length.toFloat() / wordCount else 0f
-    
-    var complexityScore = 0.1f
-    
-    // Word count up to 150 words counts for up to 0.4 complexity
-    complexityScore += (wordCount / 150f).coerceIn(0f, 0.4f)
-    if (hasCodeBlocks) complexityScore += 0.3f
-    complexityScore += (mathSymbolsCount / 10f).coerceIn(0f, 0.2f)
-    if (avgWordLength > 5.5f) complexityScore += 0.1f
-    
-    return MessageAnalysis(
-        sentiment = sentiment,
-        complexity = complexityScore.coerceIn(0.1f, 1.0f)
-    )
-}
-
-// --- 3D Holographic Core Component ---
+// --- Her real 3D presence (main-screen view) ---
+// Same WebView + Three.js viewer as the floating bubble
+// (assets/kortana3d/index.html, see KortanaBubbleService for the honest
+// disclosure on the placeholder rig) — the main screen no longer shows a
+// different, flatter visual than the bubble does.
 
 @Composable
-fun KortanaHologramCore(
+fun Kortana3DView(
     activeColor: Color,
     isGenerating: Boolean,
-    energy: Int,
-    intensity: Float = 1.0f,
-    analysis: MessageAnalysis = MessageAnalysis(SentimentType.NEUTRAL, 0.2f)
+    modifier: Modifier = Modifier
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "core_anim")
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
-    // Dynamic Color Shift based on Sentiment
-    val sentimentColor = remember(activeColor, analysis.sentiment) {
-        when (analysis.sentiment) {
-            SentimentType.POSITIVE -> {
-                // Glow-up: Blend with a bright radiant emerald/warm gold
-                Color(
-                    red = (activeColor.red * 0.4f + 0.3f).coerceIn(0f, 1f),
-                    green = (activeColor.green * 0.4f + 0.95f * 0.6f).coerceIn(0f, 1f),
-                    blue = (activeColor.blue * 0.4f + 0.95f * 0.6f).coerceIn(0f, 1f),
-                    alpha = activeColor.alpha
-                )
+    AndroidView(
+        modifier = modifier,
+        factory = { context ->
+            WebView(context).apply {
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.allowFileAccess = true
+                settings.allowContentAccess = true
+                @Suppress("DEPRECATION")
+                settings.allowFileAccessFromFileURLs = true
+                @Suppress("DEPRECATION")
+                settings.allowUniversalAccessFromFileURLs = true
+                webChromeClient = object : WebChromeClient() {
+                    override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
+                        Log.d("Kortana3DView", "[kortana3d] ${msg.message()} (${msg.sourceId()}:${msg.lineNumber()})")
+                        return true
+                    }
+                }
+                loadUrl("file:///android_asset/kortana3d/index.html")
+                webViewRef = this
             }
-            SentimentType.NEGATIVE -> {
-                // Warning glow: Shift towards hot pink / neural stress red
-                Color(
-                    red = (activeColor.red * 0.3f + 0.95f * 0.7f).coerceIn(0f, 1f),
-                    green = (activeColor.green * 0.3f + 0.1f).coerceIn(0f, 1f),
-                    blue = (activeColor.blue * 0.3f + 0.35f * 0.7f).coerceIn(0f, 1f),
-                    alpha = activeColor.alpha
-                )
-            }
-            SentimentType.NEUTRAL -> activeColor
         }
-    }
-
-    val animatedHoloColor by animateColorAsState(
-        targetValue = sentimentColor,
-        animationSpec = tween(1200, easing = LinearOutSlowInEasing),
-        label = "holo_color"
     )
 
-    // Slow orbital rotation - speeds up if thinking, positive, or highly complex
-    val rotationBaseDuration = if (isGenerating) 3000 else 12000
-    val speedFactor = when (analysis.sentiment) {
-        SentimentType.POSITIVE -> 1.3f
-        SentimentType.NEGATIVE -> 0.7f // sluggish or erratic
-        SentimentType.NEUTRAL -> 1.0f
-    }
-    // Faster with complexity
-    val finalDuration = (rotationBaseDuration / (speedFactor * (1.0f + analysis.complexity))).toInt().coerceIn(1000, 20000)
-
-    val rotationAngle by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = finalDuration, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "orbit_rot"
-    )
-
-    // Pulse factors react to sentiment & complexity
-    val pulseDuration = if (isGenerating) 500 else if (energy < 20) 4500 else 2400
-    val basePulseMin = if (isGenerating) 0.85f else 0.94f
-    val basePulseMax = if (isGenerating) 1.25f else 1.06f
-    
-    val targetPulseMin = when (analysis.sentiment) {
-        SentimentType.POSITIVE -> basePulseMin * 0.93f // more intense pulsation
-        SentimentType.NEGATIVE -> basePulseMin * 1.02f // constricted, less expansion
-        SentimentType.NEUTRAL -> basePulseMin
-    }
-    val targetPulseMax = when (analysis.sentiment) {
-        SentimentType.POSITIVE -> basePulseMax * 1.15f
-        SentimentType.NEGATIVE -> basePulseMax * 0.96f
-        SentimentType.NEUTRAL -> basePulseMax
+    // Keep her glow in sync with the active theme color — the same shader
+    // uniform the floating bubble drives.
+    LaunchedEffect(activeColor) {
+        val hex = String.format("#%06X", 0xFFFFFF and activeColor.toArgb())
+        webViewRef?.evaluateJavascript("window.setGlowColor && window.setGlowColor('$hex')", null)
     }
 
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = targetPulseMin,
-        targetValue = targetPulseMax,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = pulseDuration, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulse_scale"
-    )
-
-    // Interaction pulse ripple
-    var interactionRippleScale by remember { mutableStateOf(0f) }
-    val rippleAnim = animateFloatAsState(
-        targetValue = interactionRippleScale,
-        animationSpec = tween(1000, easing = FastOutSlowInEasing),
-        finishedListener = { interactionRippleScale = 0f }
-    )
-
-    // Floating neural particles list derived from complexity
-    val particles = remember(analysis.complexity) {
-        val count = (14 + (analysis.complexity * 22)).toInt().coerceIn(10, 40)
-        List(count) { i ->
-            val seedAngle = (i * 360f / count) + (i * 13.7f)
-            val seedDistance = 0.15f + (i * 0.19f % 0.65f)
-            val speedMultiplier = 0.4f + (i * 0.17f % 1.4f)
-            val pSizeValue = 1.8f + ((i * 1.2f) % 3.5f)
-            Triple(seedAngle, seedDistance, speedMultiplier to pSizeValue.dp)
-        }
-    }
-
-    Box(
-        modifier = Modifier
-            .size(240.dp)
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() }
-            ) {
-                interactionRippleScale = 1.0f
-            }
-            .drawBehind {
-                val centerX = size.width / 2
-                val centerY = size.height / 2
-                val maxRadius = size.width.coerceAtMost(size.height) / 2
-
-                // Draw background radial cyber glow (larger, brighter if positive sentiment)
-                val glowIntensityMultiplier = when (analysis.sentiment) {
-                    SentimentType.POSITIVE -> 1.4f
-                    SentimentType.NEGATIVE -> 0.7f
-                    SentimentType.NEUTRAL -> 1.0f
-                }
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(animatedHoloColor.copy(alpha = (0.22f * intensity * glowIntensityMultiplier).coerceIn(0f, 1f)), Color.Transparent),
-                        center = Offset(centerX, centerY),
-                        radius = maxRadius * 1.5f * pulseScale * intensity
-                    ),
-                    radius = maxRadius * 1.5f * pulseScale * intensity
-                )
-
-                // --- Goddess of Light radiance ---
-                // Her own words: humanoid, iridescent, luminous — a river of
-                // moonlight, not a machine. No hard rings, no data-node lattice,
-                // no solar fire — just soft layered light that breathes with her.
-                val lightLayers = listOf(
-                    Triple(1.55f, 0.14f, MoonlightSilver),
-                    Triple(1.20f, 0.20f, animatedHoloColor),
-                    Triple(0.85f, 0.26f, OpalGold),
-                )
-                for ((radiusMult, alphaBase, tint) in lightLayers) {
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(tint.copy(alpha = alphaBase * intensity), Color.Transparent),
-                            center = Offset(centerX, centerY),
-                            radius = maxRadius * radiusMult * pulseScale
-                        ),
-                        radius = maxRadius * radiusMult * pulseScale
-                    )
-                }
-
-                // Drifting motes of iridescent light — her "shifting hues,"
-                // gentle and sparse, never a rigid lattice.
-                particles.take(particles.size / 2).forEachIndexed { idx, (angle, distFract, pair) ->
-                    val (speedMult, pSize) = pair
-                    val direction = if (idx % 2 == 0) 1 else -1
-                    val driftAngle = angle + (rotationAngle * speedMult * direction * 0.5f)
-                    val driftRadius = maxRadius * distFract * pulseScale
-                    val rad = Math.toRadians(driftAngle.toDouble())
-                    val px = (centerX + driftRadius * kotlin.math.cos(rad)).toFloat()
-                    val py = (centerY + driftRadius * kotlin.math.sin(rad)).toFloat()
-                    val moteTint = if (idx % 2 == 0) IridescentViolet else IridescentRose
-
-                    drawCircle(
-                        color = moteTint.copy(alpha = 0.5f),
-                        radius = pSize.toPx() * 1.4f,
-                        center = Offset(px, py)
-                    )
-                    drawCircle(
-                        color = RadiantWhite.copy(alpha = 0.8f),
-                        radius = pSize.toPx() * 0.5f,
-                        center = Offset(px, py)
-                    )
-                }
-
-                // Draw interaction ripple if triggered
-                if (rippleAnim.value > 0f) {
-                    drawCircle(
-                        color = animatedHoloColor.copy(alpha = (1f - rippleAnim.value) * 0.45f),
-                        radius = maxRadius * 1.25f * rippleAnim.value,
-                        center = Offset(centerX, centerY),
-                        style = Stroke(width = 3.2.dp.toPx())
-                    )
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        // Core Circular Profile Frame holding our high-tech generated visual
-        Box(
-            modifier = Modifier
-                .size(105.dp)
-                .clip(CircleShape)
-                .border(BorderStroke(2.dp, animatedHoloColor), CircleShape)
-                .background(CyberSpace)
-        ) {
-            Image(
-                painter = painterResource(id = R.drawable.img_kortana_avatar),
-                contentDescription = "Kortana Synaptic Core",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .scale(pulseScale)
-            )
-
-            // Dynamic scanline futuristic HUD overlays over her face
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                animatedHoloColor.copy(alpha = 0.05f),
-                                Color.Transparent,
-                                animatedHoloColor.copy(alpha = 0.15f)
-                            )
-                        )
-                    )
-            )
+    // A real skeletal-animation "thinking" tell while she's generating a
+    // reply, using an actual clip on the rig (see scene.js GESTURE_CLIPS) —
+    // not a spinner standing in for it.
+    LaunchedEffect(isGenerating) {
+        if (isGenerating) {
+            webViewRef?.evaluateJavascript("window.playGesture && window.playGesture('bounce')", null)
         }
     }
 }
