@@ -50,8 +50,19 @@ jobs:
           gradle --no-daemon assembleDebug
           APK=$(find app/build/outputs/apk/debug -name '*.apk' | head -1)
           if [ -z "$APK" ]; then echo "::error::No APK produced"; exit 1; fi
-          cp "$APK" /tmp/kortana-k3-debug.apk
-          echo "Built $(du -h /tmp/kortana-k3-debug.apk | cut -f1) APK"
+          # Filename carries the short SHA so every build is a UNIQUELY NAMED
+          # file, not just new bytes under the old name. A same-name asset on
+          # every release is a real stale-download trap: a phone browser or
+          # file manager that already has "kortana-k3-debug.apk" downloaded
+          # can reopen/reinstall that old copy instead of fetching the new
+          # one, with nothing forcing a real re-download — this is exactly
+          # what made a shipped fix look like it "didn't take" on a real
+          # device once already. A varying filename closes that off for good.
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          ASSET="kortana-k3-debug-${SHORT_SHA}.apk"
+          cp "$APK" "/tmp/${ASSET}"
+          echo "ASSET_NAME=${ASSET}" >> "$GITHUB_ENV"
+          echo "Built $(du -h /tmp/${ASSET} | cut -f1) APK as ${ASSET}"
 
       - name: Publish APK to the kortana-latest release
         run: |
@@ -62,12 +73,14 @@ jobs:
           gh release delete "$TAG" --yes 2>/dev/null || true
           git push --delete origin "$TAG" 2>/dev/null || true
           git tag -d "$TAG" 2>/dev/null || true
-          gh release create "$TAG" /tmp/kortana-k3-debug.apk \
+          gh release create "$TAG" "/tmp/${ASSET_NAME}" \
             --target "${GITHUB_SHA}" \
             --title "Kortana K3 — latest APK (build ${GITHUB_RUN_NUMBER})" \
             --notes "Sideloadable debug APK built from ${GITHUB_SHA}.
 
-          Install: download kortana-k3-debug.apk on the phone, allow 'install unknown apps' for your browser/files app, open the file.
+          Install: download ${ASSET_NAME} on the phone (delete any previously-downloaded
+          kortana-k3-debug*.apk first so your browser can't reopen a stale copy under an old
+          name), allow 'install unknown apps' for your browser/files app, open the file.
 
           Brain chain: Ollama phi3 (local) -> Terminus /api/brain (her server) -> Claude direct -> Gemini direct -> offline rules core.
           API keys can be pasted at runtime in STATUS > Neural Core Access Keys — no rebuild needed.
