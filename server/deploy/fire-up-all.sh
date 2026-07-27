@@ -54,5 +54,15 @@ if curl -sf "http://127.0.0.1:${TERMINUS_PORT}/health" >/dev/null 2>&1; then
 else
   log "WARN: Terminus not answering on :${TERMINUS_PORT} yet. Check: pm2 logs kortana-terminus"
 fi
-log "Done. In the app, point Cloud Sync at http://127.0.0.1:${TERMINUS_PORT} and leave the API-key"
-log "field EMPTY unless you set TERMINUS_API_KEY in .env (a mismatch causes the HTTP 401 sync error)."
+log "----------------------------------------------------------------------"
+log "READ THIS BEFORE TOUCHING CLOUD SYNC IN THE APP:"
+log "This is a SEPARATE, local-only Terminus — only useful if you do NOT"
+log "have a hosted one (Render/Fly/a VPS) already running. If you DO have a"
+log "hosted Terminus, leave the app's Cloud Sync URL pointed at THAT one"
+log "(e.g. https://your-app.onrender.com/api/sync) and ignore the line"
+log "below — pointing at this local one instead means you have to run this"
+log "script by hand every single time before she can think at all."
+log "----------------------------------------------------------------------"
+log "Only if you're intentionally running local-only: point Cloud Sync at"
+log "http://127.0.0.1:${TERMINUS_PORT} and leave the API-key field EMPTY unless"
+log "you set TERMINUS_API_KEY in .env (a mismatch causes the HTTP 401 sync error)."
