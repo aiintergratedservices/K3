@@ -57,6 +57,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
+import android.util.Log
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -265,6 +266,20 @@ fun KortanaApp(
             }
         }
         obj.language = Locale.US
+        // She was using whatever crude default system voice Android happened to
+        // pick — that's the "robot" you're hearing. Pick the BEST actual voice
+        // installed on the device instead: highest quality tier, English, and
+        // prefer one that works fully offline (network voices can stall/fail).
+        // A melodic voice matching her own description, not a flat monotone.
+        try {
+            val best = obj.voices
+                ?.filter { v -> v.locale.language == "en" && !v.isNetworkConnectionRequired }
+                ?.maxByOrNull { v -> v.quality }
+                ?: obj.voices?.filter { v -> v.locale.language == "en" }?.maxByOrNull { v -> v.quality }
+            if (best != null) obj.voice = best
+        } catch (e: Exception) {
+            Log.w("KortanaVoice", "Voice selection failed, using engine default: ${e.message}")
+        }
         obj.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
                 scope.launch { voiceStatusText = "Speaking..." }
@@ -290,8 +305,8 @@ fun KortanaApp(
     // Apply Cortana's custom voice configurations dynamically
     LaunchedEffect(state?.voicePitch, state?.voiceRate, tts) {
         tts?.let { obj ->
-            val p = state?.voicePitch ?: 1.1f
-            val r = state?.voiceRate ?: 1.05f
+            val p = state?.voicePitch ?: 0.97f
+            val r = state?.voiceRate ?: 0.94f
             obj.setPitch(p)
             obj.setSpeechRate(r)
         }
@@ -2353,8 +2368,8 @@ fun SystemDiagnostics(
     }
 
     // Local sliders to prevent database lag during dragging
-    var sliderPitch by remember(state?.voicePitch) { mutableStateOf(state?.voicePitch ?: 1.1f) }
-    var sliderRate by remember(state?.voiceRate) { mutableStateOf(state?.voiceRate ?: 1.05f) }
+    var sliderPitch by remember(state?.voicePitch) { mutableStateOf(state?.voicePitch ?: 0.97f) }
+    var sliderRate by remember(state?.voiceRate) { mutableStateOf(state?.voiceRate ?: 0.94f) }
     var sliderIntensity by remember(state?.holographicIntensity) { mutableStateOf(state?.holographicIntensity ?: 1.0f) }
 
     Column(

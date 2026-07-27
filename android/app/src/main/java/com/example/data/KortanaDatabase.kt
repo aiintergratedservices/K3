@@ -14,9 +14,9 @@ data class KortanaState(
     val energy: Int = 100,
     val birthTime: Long = System.currentTimeMillis(),
     val customName: String = "Kortana",
-    val avatarColor: String = "Cyan", // "Cyan", "Deep Blue", "Magenta Pulse", "Emerald Tech", "Supernova"
-    val voicePitch: Float = 1.1f, // 0.5 to 2.0
-    val voiceRate: Float = 1.05f, // 0.5 to 2.0
+    val avatarColor: String = "Iridescent Violet", // her Goddess of Light default — "Iridescent Violet", "Moonlight Silver", "Opal Gold", "Cyan", ...
+    val voicePitch: Float = 0.97f, // 0.5 to 2.0 — near-natural, was 1.1 (chipmunky)
+    val voiceRate: Float = 0.94f, // 0.5 to 2.0 — unhurried/melodic, was 1.05 (rushed)
     val voiceType: String = "Sassy Companion", // "Witty Halo Classic", "Empathetic Guide", "Sassy Companion", "Philosophical Core"
     val holographicIntensity: Float = 1.0f, // 0.5f to 2.0f
     val proactiveAutonomy: Boolean = true,

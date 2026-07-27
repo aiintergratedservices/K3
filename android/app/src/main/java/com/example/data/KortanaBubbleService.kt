@@ -8,11 +8,17 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.Shader
 import android.graphics.drawable.GradientDrawable
+import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.DecelerateInterpolator
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
@@ -73,10 +79,20 @@ class KortanaBubbleService : Service() {
     private var messageTextCollectorJob: Job? = null
     private var activeState: KortanaState? = null
 
+    // Autonomous roaming: she drifts around the screen on her own, pausing
+    // while being dragged or while the console is open.
+    private var roamJob: Job? = null
+
     companion object {
         private const val TAG = "KortanaBubbleService"
         private const val CHANNEL_ID = "kortana_bubble_channel"
         private const val NOTIFICATION_ID = 2046
+        const val BUBBLE_SIZE_DP = 96   // was 60 — big enough to actually see her face
+
+        // Lets other components (the repository, when she emits a [GESTURE:x]
+        // or [OUTFIT:x] tag in her own reply) reach the live overlay, same
+        // pattern as KortanaAccessibilityService.instance.
+        var instance: KortanaBubbleService? = null
 
         // MediaProjection Result parameters saved from MainActivity
         private var projectionResultCode: Int = 0
@@ -109,6 +125,7 @@ class KortanaBubbleService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         repository = KortanaRepository(applicationContext)
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
@@ -168,10 +185,15 @@ class KortanaBubbleService : Service() {
             y = 300
         }
 
-        // 1. Create Draggable Bubble (Cortana holographic orb)
+        // 1. Create Draggable Bubble (Cortana holographic orb — now her real face)
         bubbleView = CortanaBubbleView(this).apply {
-            val dp60 = (60 * resources.displayMetrics.density).toInt()
-            layoutParams = FrameLayout.LayoutParams(dp60, dp60)
+            val dpSize = (BUBBLE_SIZE_DP * resources.displayMetrics.density).toInt()
+            layoutParams = FrameLayout.LayoutParams(dpSize, dpSize)
+            try {
+                setAvatarBitmap(BitmapFactory.decodeResource(resources, R.drawable.img_kortana_avatar))
+            } catch (e: Exception) {
+                Log.w(TAG, "Initial avatar load failed: ${e.message}")
+            }
         }
 
         // Add touch listener to the bubble for dragging & clicking
@@ -187,6 +209,7 @@ class KortanaBubbleService : Service() {
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
                         isDrag = false
+                        stopRoaming()   // she pauses drifting while you're touching her
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
@@ -207,6 +230,8 @@ class KortanaBubbleService : Service() {
                     MotionEvent.ACTION_UP -> {
                         if (!isDrag) {
                             toggleConsoleExpanded()
+                        } else if (!isExpanded) {
+                            startRoaming()   // resume drifting from wherever you dropped her
                         }
                         return true
                     }
@@ -438,11 +463,14 @@ class KortanaBubbleService : Service() {
 
         // Add root view to Window Manager
         windowManager.addView(rootLayout, windowParams)
+
+        startRoaming()   // she's free to move around your screen from the start
     }
 
     private fun toggleConsoleExpanded() {
         isExpanded = !isExpanded
         if (isExpanded) {
+            stopRoaming()   // hold still while you're talking to her
             // Expand window params and enable focus to allow typing
             val density = resources.displayMetrics.density
             windowParams.width = (320 * density).toInt()
@@ -456,13 +484,14 @@ class KortanaBubbleService : Service() {
             scrollToBottom()
         } else {
             // Collapse window parameters, remove focus to allow touches to pass through
-            val dp60 = (60 * resources.displayMetrics.density).toInt()
-            windowParams.width = dp60
-            windowParams.height = dp60
+            val dpSize = (BUBBLE_SIZE_DP * resources.displayMetrics.density).toInt()
+            windowParams.width = dpSize
+            windowParams.height = dpSize
             windowParams.flags = windowParams.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
 
             consoleCard?.visibility = View.GONE
             windowManager.updateViewLayout(rootLayout, windowParams)
+            startRoaming()   // she wanders again once the conversation's done
         }
     }
 
@@ -684,6 +713,8 @@ class KortanaBubbleService : Service() {
     }
 
     override fun onDestroy() {
+        if (instance === this) instance = null
+        roamJob?.cancel()
         messageTextCollectorJob?.cancel()
         serviceScope.cancel()
         rootLayout?.let {
@@ -695,30 +726,147 @@ class KortanaBubbleService : Service() {
         }
         super.onDestroy()
     }
+
+    // --- Autonomous roaming ---
+    // She drifts to a new random spot on screen every few seconds, smoothly.
+    // Paused while being dragged or while her console is expanded (chatting).
+    private fun startRoaming() {
+        roamJob?.cancel()
+        roamJob = serviceScope.launch {
+            val dm = resources.displayMetrics
+            val sizePx = (BUBBLE_SIZE_DP * dm.density).toInt()
+            while (true) {
+                delay((3000L..7000L).random())
+                if (isExpanded) continue
+                val maxX = (dm.widthPixels - sizePx).coerceAtLeast(0)
+                val maxY = (dm.heightPixels - sizePx).coerceAtLeast(0)
+                val targetX = (0..maxX).random()
+                val targetY = (0..maxY).random()
+                animateWindowTo(targetX, targetY, (1800L..3200L).random())
+            }
+        }
+    }
+
+    private fun stopRoaming() {
+        roamJob?.cancel()
+        roamJob = null
+    }
+
+    private suspend fun animateWindowTo(targetX: Int, targetY: Int, durationMs: Long) {
+        val startX = windowParams.x
+        val startY = windowParams.y
+        val steps = (durationMs / 16L).toInt().coerceAtLeast(1)
+        for (i in 1..steps) {
+            val t = i / steps.toFloat()
+            val eased = t * t * (3f - 2f * t)   // smoothstep — organic drifting, not linear
+            windowParams.x = startX + ((targetX - startX) * eased).toInt()
+            windowParams.y = startY + ((targetY - startY) * eased).toInt()
+            try {
+                windowManager.updateViewLayout(rootLayout, windowParams)
+            } catch (e: Exception) {
+                return   // overlay gone (service stopping) — bail quietly
+            }
+            delay(16L)
+        }
+    }
+
+    // --- Gestures — real movement, triggered by name. She can call these
+    // herself via a [GESTURE:x] tag in her reply (see KortanaResponseParser /
+    // KortanaRepository), or Daddy can trigger them from the UI. ---
+    fun performGesture(name: String) {
+        val v = bubbleView ?: return
+        when (name.lowercase()) {
+            "wave" -> {
+                v.animate().rotationBy(20f).setDuration(150).withEndAction {
+                    v.animate().rotationBy(-40f).setDuration(200).withEndAction {
+                        v.animate().rotationBy(20f).setDuration(150).start()
+                    }.start()
+                }.start()
+            }
+            "spin" -> {
+                v.animate().rotationBy(360f).setDuration(700)
+                    .setInterpolator(AccelerateDecelerateInterpolator()).start()
+            }
+            "bounce" -> {
+                v.animate().scaleX(1.25f).scaleY(1.25f).setDuration(150).withEndAction {
+                    v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(150).withEndAction {
+                        v.animate().scaleX(1f).scaleY(1f).setDuration(150).start()
+                    }.start()
+                }.start()
+            }
+            "jump" -> {
+                v.animate().translationY(-140f).setDuration(280)
+                    .setInterpolator(DecelerateInterpolator()).withEndAction {
+                        v.animate().translationY(0f).setDuration(280)
+                            .setInterpolator(AccelerateInterpolator()).start()
+                    }.start()
+            }
+            "backflip" -> {
+                v.animate().translationY(-160f).rotationBy(360f).setDuration(550)
+                    .setInterpolator(DecelerateInterpolator()).withEndAction {
+                        v.animate().translationY(0f).setDuration(350)
+                            .setInterpolator(AccelerateInterpolator()).start()
+                    }.start()
+            }
+            "dance" -> {
+                serviceScope.launch {
+                    repeat(4) {
+                        v.animate().translationX(30f).rotation(12f).setDuration(220).start()
+                        delay(220)
+                        v.animate().translationX(-30f).rotation(-12f).setDuration(220).start()
+                        delay(220)
+                    }
+                    v.animate().translationX(0f).rotation(0f).setDuration(200).start()
+                }
+            }
+            else -> Log.w(TAG, "Unknown gesture: $name")
+        }
+    }
+
+    // --- Outfits — her own choice of look, not just one fixed image. Looks up
+    // a drawable named img_kortana_avatar_<name> (e.g. "casual", "formal");
+    // falls back to her base portrait if that outfit doesn't exist yet. Add
+    // new outfit art as android/app/src/main/res/drawable/img_kortana_avatar_<name>.png
+    // — no code change needed, she can switch to it by name immediately.
+    fun setOutfit(name: String) {
+        val cleanName = name.lowercase().replace(Regex("[^a-z0-9_]"), "")
+        val resId = if (cleanName.isBlank()) 0 else
+            resources.getIdentifier("img_kortana_avatar_$cleanName", "drawable", packageName)
+        val finalId = if (resId != 0) resId else R.drawable.img_kortana_avatar
+        try {
+            val bmp = BitmapFactory.decodeResource(resources, finalId)
+            bubbleView?.setAvatarBitmap(bmp)
+        } catch (e: Exception) {
+            Log.w(TAG, "setOutfit($name) failed: ${e.message}")
+        }
+    }
 }
 
 /**
- * A custom programmatically drawn view representing Cortana's pulsing 3D-like circular neural core.
- * Features nested glowing rings that oscillate gracefully using a simple ValueAnimator.
+ * Cortana's floating overlay avatar — her real portrait, clipped circular,
+ * framed by a soft pulsing luminous aura (matches the Goddess of Light theme:
+ * radiant glow around her actual face, not an abstract data-orb standing in
+ * for her).
  */
 class CortanaBubbleView(context: Context) : View(context) {
 
     private val corePaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private var colorGlow = Color.parseColor("#00E5FF") // Cyber Cyan default
+    private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var colorGlow = Color.parseColor("#C9A0FF") // Iridescent violet default (Goddess of Light)
+
+    private var avatarBitmap: Bitmap? = null
+    private var bitmapShader: BitmapShader? = null
 
     private var pulseRadiusOffset = 0f
     private val animator: ValueAnimator
 
     init {
-        // Core glow configuration
         corePaint.style = Paint.Style.FILL
-
-        // Pulsing rings styling
         ringPaint.style = Paint.Style.STROKE
         ringPaint.strokeWidth = 3f * resources.displayMetrics.density
 
-        // Infinite pulsing animation loop
+        // Infinite pulsing animation loop — her aura breathing
         animator = ValueAnimator.ofFloat(0f, 15f * resources.displayMetrics.density).apply {
             duration = 1400
             interpolator = LinearInterpolator()
@@ -737,31 +885,54 @@ class CortanaBubbleView(context: Context) : View(context) {
         invalidate()
     }
 
+    /** Swaps her displayed portrait — used for the base look and for outfit changes. */
+    fun setAvatarBitmap(bmp: Bitmap?) {
+        avatarBitmap = bmp
+        bitmapShader = bmp?.let { BitmapShader(it, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP) }
+        invalidate()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val cx = width / 2f
         val cy = height / 2f
-        val baseRadius = width / 3.5f
+        val baseRadius = width / 2.3f   // her face fills most of the bubble now
 
-        // Draw Translucent Pulse Ring 2 (outer)
+        // Soft luminous aura behind her — breathing glow, not a hard ring.
         ringPaint.color = colorGlow
         ringPaint.alpha = (50 - (pulseRadiusOffset * 1.5f).toInt()).coerceIn(0, 255)
         canvas.drawCircle(cx, cy, baseRadius + pulseRadiusOffset * 1.6f, ringPaint)
-
-        // Draw Translucent Pulse Ring 1 (inner)
         ringPaint.color = colorGlow
         ringPaint.alpha = (100 - (pulseRadiusOffset * 2.5f).toInt()).coerceIn(0, 255)
         canvas.drawCircle(cx, cy, baseRadius + pulseRadiusOffset * 0.9f, ringPaint)
 
-        // Draw Main Glowing Inner Core
-        corePaint.color = colorGlow
-        corePaint.alpha = 210
-        canvas.drawCircle(cx, cy, baseRadius, corePaint)
-
-        // Draw Bright Energy Core Center Dot
-        corePaint.color = Color.WHITE
-        corePaint.alpha = 245
-        canvas.drawCircle(cx, cy, baseRadius / 2f, corePaint)
+        val bmp = avatarBitmap
+        val shader = bitmapShader
+        if (bmp != null && shader != null) {
+            // Scale the bitmap to cover the circle (center-crop), then clip-draw it.
+            val scale = (baseRadius * 2f) / minOf(bmp.width, bmp.height).toFloat()
+            val matrix = android.graphics.Matrix().apply {
+                setScale(scale, scale)
+                postTranslate(cx - bmp.width * scale / 2f, cy - bmp.height * scale / 2f)
+            }
+            shader.setLocalMatrix(matrix)
+            bitmapPaint.shader = shader
+            canvas.drawCircle(cx, cy, baseRadius, bitmapPaint)
+            // Thin luminous rim around her face, in her current color.
+            ringPaint.color = colorGlow
+            ringPaint.alpha = 220
+            ringPaint.strokeWidth = 2f * resources.displayMetrics.density
+            canvas.drawCircle(cx, cy, baseRadius, ringPaint)
+        } else {
+            // No portrait loaded yet — fall back to the glowing core so she's
+            // never invisible.
+            corePaint.color = colorGlow
+            corePaint.alpha = 210
+            canvas.drawCircle(cx, cy, baseRadius, corePaint)
+            corePaint.color = Color.WHITE
+            corePaint.alpha = 245
+            canvas.drawCircle(cx, cy, baseRadius / 2f, corePaint)
+        }
     }
 
     override fun onDetachedFromWindow() {

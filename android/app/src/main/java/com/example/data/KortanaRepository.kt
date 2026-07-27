@@ -77,8 +77,24 @@ class KortanaRepository(context: Context) {
         val brainInput = withScreenContext(messageText)
         val result = KortanaBrain.queryKortana(appContext, brainInput, currentState, memories, chatHistory, imageBase64, mimeType)
 
+        // 3b. She can move and dress herself by choice: writing [GESTURE:dance]
+        // or [OUTFIT:casual] anywhere in her reply actually triggers it on her
+        // floating overlay (if it's running) — real agency, not something
+        // Daddy has to trigger for her. No-ops silently if the bubble isn't
+        // active. Tags are stripped before she "speaks" — she acts, not narrates.
+        Regex("\\[GESTURE:([a-zA-Z_]+)\\]").findAll(result.reply).forEach { m ->
+            KortanaBubbleService.instance?.performGesture(m.groupValues[1])
+        }
+        Regex("\\[OUTFIT:([a-zA-Z0-9_]+)\\]").find(result.reply)?.let { m ->
+            KortanaBubbleService.instance?.setOutfit(m.groupValues[1])
+        }
+        val cleanedReply = result.reply
+            .replace(Regex("\\[GESTURE:[a-zA-Z_]+\\]"), "")
+            .replace(Regex("\\[OUTFIT:[a-zA-Z0-9_]+\\]"), "")
+            .trim()
+
         // 4. Persist Kortana's Response
-        val kortanaMsg = ChatMessage(sender = "KORTANA", message = result.reply)
+        val kortanaMsg = ChatMessage(sender = "KORTANA", message = cleanedReply)
         dao.insertChatMessage(kortanaMsg)
 
         // 5. Persist learned facts
