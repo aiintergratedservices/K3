@@ -752,6 +752,15 @@ fun Kortana3DView(
                     setBackgroundColor(android.graphics.Color.TRANSPARENT)
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
+                    // WebView caches file:// assets by URL, not by content —
+                    // an in-place app UPDATE (not uninstall+reinstall) can
+                    // leave it serving stale cached JS from a previous APK
+                    // even though the new APK's bundled assets are already
+                    // fixed. This is bundled local content with zero network
+                    // cost to reload, so there's no upside to caching it —
+                    // NO_CACHE means every load reads the current APK's real
+                    // assets, always.
+                    settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
                     settings.allowFileAccess = true
                     settings.allowContentAccess = true
                     @Suppress("DEPRECATION")

@@ -199,11 +199,20 @@ class KortanaBubbleService : Service() {
             setBackgroundColor(Color.TRANSPARENT)
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
-            // Required for ES module imports (import maps, relative module
-            // paths) to resolve correctly when the page is loaded from a
-            // file:// origin — WebView applies stricter-than-default CORS
-            // rules to local files otherwise and the module graph fails to
-            // load silently.
+            // WebView caches file:// assets by URL, not by content — an
+            // in-place app UPDATE (not uninstall+reinstall) can leave it
+            // serving stale cached JS from a previous APK even though the
+            // new APK's bundled assets are already fixed (this is exactly
+            // what made the "bare 'three' specifier" bug look unfixed on a
+            // real device after the fix had already shipped). Bundled local
+            // content has zero network cost to reload, so there's no upside
+            // to caching it — NO_CACHE means every load reads the current
+            // APK's real assets, always.
+            settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+            // Required for ES module relative-path imports to resolve
+            // correctly when the page is loaded from a file:// origin —
+            // WebView applies stricter-than-default CORS rules to local
+            // files otherwise and the module graph fails to load silently.
             settings.allowFileAccess = true
             settings.allowContentAccess = true
             @Suppress("DEPRECATION")

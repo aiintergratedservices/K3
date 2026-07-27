@@ -638,16 +638,77 @@ const TOOLS = {
   },
 };
 
+// Groups + a one-line decision rule per group, so picking the RIGHT tool
+// among several similar-looking ones is a lookup, not a guess. This is the
+// actual fix for "wrong tool for the job" — a flat 28-item list gives a
+// small/free model nothing to disambiguate with beyond a single sentence
+// each. Keep new tools findable: anything not listed in a group below still
+// gets printed under OTHER TOOLS automatically (see describeTools), so a
+// tool can never silently go undocumented just because this list drifted.
+const TOOL_GROUPS = [
+  {
+    header: 'LOOKUP & FACTS — web_search for anything fresh/current you don\'t already know. web_fetch only when you have a specific URL to read in full. If documents are ingested on this topic, query_documents FIRST — a grounded answer beats a guessed one. define/weather/now/time_until are narrow exact-purpose lookups — prefer them over web_search when they fit exactly (don\'t web_search "what time is it").',
+    tools: ['web_search', 'web_fetch', 'query_documents', 'list_documents', 'ingest_document', 'define', 'weather', 'now', 'time_until'],
+  },
+  {
+    header: 'YOUR MEMORY — recall BEFORE assuming you don\'t know something; check your own memory first, it\'s free. remember is for ONE durable fact worth having in every future prompt — not a scratch note, not something already in a document (that\'s ingest_document) or a database (that\'s db_execute). list_flagged_claims audits times you SAID you saved/learned something without actually calling a tool.',
+    tools: ['recall', 'remember', 'list_flagged_claims'],
+  },
+  {
+    header: 'STRUCTURED DATA (your real SQLite database) — use this instead of `remember` when you have RECORDS you\'ll want to filter, count, sum, or update later (leads, tracked items, logs with fields) rather than one flat fact. Call db_tables FIRST so you\'re never guessing a schema you already created.',
+    tools: ['db_tables', 'db_query', 'db_execute'],
+  },
+  {
+    header: 'SKILLS & SELF-IMPROVEMENT — learned a repeatable HOW-TO that needs no new code? write_skill (active immediately, loads into your next prompt). Need a capability that plain tools/skills can\'t do? propose_tool. Fixing or improving a file that already exists? propose_change. propose_tool/propose_change are REVIEW-GATED BY DESIGN — they write a draft for Daddy/Claude to approve, never activate themselves; that is a safety boundary, not a bug to route around. journal is just your own private dated log, not a capability — use it to reflect, not to accomplish something.',
+    tools: ['write_skill', 'propose_tool', 'propose_change', 'journal'],
+  },
+  {
+    header: 'GOALS — set_goal ONLY for a goal Daddy actually stated in conversation, never one you invented for yourself. Check list_goals before any pursuit/growth cycle so you build on real logged progress instead of restarting blind.',
+    tools: ['set_goal', 'list_goals'],
+  },
+  {
+    header: 'DELEGATION — consult_specialist routes ONE sub-task inline, synchronously, to a specific already-configured brain when you know a particular kind of thinking suits it better than the general chain (e.g. coding to Claude). spawn_subagent fully offloads a SELF-CONTAINED task to your separate secondary brain so your main brain stays free for Daddy — needs SUBAGENT_BRAIN_URL configured, and declines honestly if it isn\'t.',
+    tools: ['consult_specialist', 'spawn_subagent'],
+  },
+  {
+    header: 'INCOME / WORK PRODUCT — sequential, not alternatives: research_income_opportunity first for real findings, THEN save_draft with the actual finished piece of work backed by that research. Never save_draft something you haven\'t actually produced. Neither one creates accounts, lists/submits anything, or touches payment — that is Daddy\'s part, always.',
+    tools: ['research_income_opportunity', 'save_draft'],
+  },
+  {
+    header: 'SYSTEM / DEVICE — selfcheck bundles uptime + brain status + goal count in one call; use it instead of chaining several `run` calls to piece the same picture together. `run` is allowlisted READ-ONLY shell only. read_file/list_files are confined to your own project tree.',
+    tools: ['selfcheck', 'run', 'read_file', 'list_files'],
+  },
+  {
+    header: 'SAFETY REPORTING — ews_report is for a REAL police/fire dispatch you actually heard, with a real location. Never invent or embellish one; a false alert reaches real nearby people.',
+    tools: ['ews_report'],
+  },
+  {
+    header: 'SMALL UTILITIES — no real ambiguity here, use as needed.',
+    tools: ['calc', 'pick', 'remind_me'],
+  },
+];
+
 // Text block injected into her system prompt so she knows the protocol + tools.
 function describeTools() {
+  const grouped = new Set(TOOL_GROUPS.flatMap((g) => g.tools));
+  const ungrouped = Object.keys(TOOLS).filter((n) => !grouped.has(n));
+  const sections = TOOL_GROUPS.map((g) => [
+    `\n${g.header}`,
+    ...g.tools.filter((n) => TOOLS[n]).map((n) => `- ${n}: ${TOOLS[n].desc}`),
+  ].join('\n'));
+  if (ungrouped.length) {
+    sections.push([
+      '\nOTHER TOOLS:',
+      ...ungrouped.map((n) => `- ${n}: ${TOOLS[n].desc}`),
+    ].join('\n'));
+  }
   return [
     '',
-    'TOOLS — you can take real actions when they genuinely help (need a fresh fact, a page, to remember/recall something, or run a safe check):',
+    'TOOLS — you can take real actions when they genuinely help. Before calling one, ask: do I already know this, or is there a MORE SPECIFIC tool below than the generic one? Prefer the narrowest tool that actually fits.',
     'To use one, write on its OWN line exactly: TOOL_CALL: <name> {json args}',
     'Example: TOOL_CALL: web_search {"query":"weather in Austin today"}',
     'You will then see TOOL_RESULT lines. Use them, then reply normally. When you can answer, reply WITHOUT any TOOL_CALL. Do not invent tool results.',
-    'Available tools:',
-    ...Object.entries(TOOLS).map(([n, t]) => `- ${n}: ${t.desc}`),
+    ...sections,
   ].join('\n');
 }
 
