@@ -506,44 +506,6 @@ fun KortanaApp(
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Divider(color = CyberBorder, thickness = 1.dp)
-
-                // NEVER BACKED UP warning — impossible to miss, always
-                // visible regardless of tab. This is the actual fix for what
-                // just happened: auto-sync could silently fail forever with
-                // no visible signal anywhere, so "she's never been backed
-                // up" was only discovered the hard way, after a reinstall
-                // wiped local data with nothing to restore. lastSyncTime
-                // stays 0 until a sync ACTUALLY succeeds (see
-                // autoSyncIfEnabled/backupToCloud), so this can't lie the
-                // way the old silent-catch-block could.
-                if (state != null && state.lastSyncTime == 0L) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(
-                                indication = null,
-                                interactionSource = remember { MutableInteractionSource() }
-                            ) { activeTab = 4 }
-                            .background(NeonPink.copy(alpha = 0.12f))
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Warning,
-                            contentDescription = null,
-                            tint = NeonPink,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "NEVER BACKED UP — tap to fix in Settings",
-                            color = NeonPink,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-                }
             }
         }
     ) { innerPadding ->
