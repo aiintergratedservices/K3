@@ -1,0 +1,9 @@
+com.hackerai.supervisor/
+├── SupervisorCoderSystem.java    — entry point
+├── agent/                        — 7 agent interfaces + default impls
+├── dispatch/                     — tool registry & dispatcher
+├── concurrent/                   — stage orchestrator
+├── model/                        — data model records
+│   └── value/                    — value types (Endpoint, OpenPort, etc.)
+├── context/                      — thread-safe context map
+└── annotation/                   — @SupervisorAgent, @K, etc.

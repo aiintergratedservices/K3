@@ -1,0 +1,38 @@
+com/hackerai/supervisor/
+├── SupervisorCoderSystem.java
+├── agent/
+│   ├── ContextEngine.java
+│   ├── ExplorerAgent.java
+│   ├── PlannerAgent.java
+│   ├── ImplementerAgent.java
+│   ├── ExecutorAgent.java
+│   ├── DebuggerAgent.java
+│   └── SummarizerAgent.java
+├── dispatch/
+│   ├── ToolDispatcher.java
+│   └── ToolRegistry.java
+├── concurrent/
+│   └── StageOrchestrator.java
+├── model/
+│   ├── ContextSnapshot.java
+│   ├── ExplorationMap.java
+│   ├── ExecutionPlan.java
+│   ├── ImplementationResult.java
+│   ├── ExecutionResult.java
+│   ├── DebugOutcome.java
+│   ├── OperationSummary.java
+│   └── value/
+│       ├── Endpoint.java
+│       ├── OpenPort.java
+│       ├── DataFlow.java
+│       ├── SecretCandidate.java
+│       ├── OSInfo.java
+│       ├── OperationMode.java
+│       └── TargetScope.java
+├── annotation/
+│   ├── SupervisorAgent.java
+│   ├── SupervisorRequest.java
+│   ├── AgentMethod.java
+│   └── K.java
+└── context/
+    └── ContextMap.java

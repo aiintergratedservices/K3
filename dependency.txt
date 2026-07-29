@@ -1,0 +1,4 @@
+
+---
+
+Everything above is ready to copy-paste directly into your assistant's GitHub repo. The entire system is **self-contained Java 21+** with zero external dependencies — just `java.base` and `java.net.http` from the standard library.
