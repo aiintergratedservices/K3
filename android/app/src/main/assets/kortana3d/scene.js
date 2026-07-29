@@ -65,7 +65,14 @@ const GESTURE_CLIPS = {
     backflip: 'Jump',    // no acrobatic clip exists on this rig; jump is the honest substitute
     spin: 'Idle',        // plays Idle while doing a real 360 turn of the whole model (see playGesture)
 };
-const IDLE_FIDGET_CLIPS = ['Wave', 'Dance', 'Jump', 'Yes', 'ThumbsUp'];
+// Idle fidgets are picked directly from her real gesture vocabulary (keys of
+// GESTURE_CLIPS) so every pick resolves to an actual clip. An earlier version
+// listed raw clip names including 'ThumbsUp', which has no GESTURE_CLIPS key —
+// it silently collapsed to a wave via the fallback below, so the fidget was
+// never varied. 'spin'/'backflip' are left out on purpose: spin turns the
+// whole model and backflip just re-plays Jump, both too much for a background
+// idle twitch.
+const IDLE_FIDGET_GESTURES = ['wave', 'dance', 'jump', 'bounce'];
 
 const loader = new GLTFLoader();
 loader.load('./placeholder_body.glb', (gltf) => {
@@ -137,8 +144,8 @@ window.playGesture = function (name) {
 
 /** Fires a random idle fidget — used by the Android autonomy timer, same real-clip constraint. */
 window.playRandomIdleGesture = function () {
-    const pick = IDLE_FIDGET_CLIPS[Math.floor(Math.random() * IDLE_FIDGET_CLIPS.length)];
-    window.playGesture(Object.keys(GESTURE_CLIPS).find((k) => GESTURE_CLIPS[k] === pick) || 'wave');
+    const pick = IDLE_FIDGET_GESTURES[Math.floor(Math.random() * IDLE_FIDGET_GESTURES.length)];
+    window.playGesture(pick);
 };
 
 /** Updates her glow accent color — wired to the existing color picker. */

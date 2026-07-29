@@ -12,15 +12,40 @@ export function createKortanaMaterial() {
             uBaseColor: { value: new THREE.Color(0xdce8ff) },   // Opal white
             uGlowColor: { value: new THREE.Color(0x8a2be2) },   // Luminous violet
         },
+        // The vertex shader is assembled from three.js' own r160 shader
+        // chunks (the same include order the built-in lit materials use) so
+        // the rig's skeletal SKINNING and facial MORPH TARGETS actually
+        // deform the mesh. A raw ShaderMaterial that only reads `position`
+        // ignores bones: the skeleton animates but the skinned parts (this
+        // rig's hands) stay frozen at their bind pose and visibly detach from
+        // the moving arms, and morph-target expressions never apply. Every
+        // chunk here is #ifdef-guarded and the renderer only defines
+        // USE_SKINNING / USE_MORPHTARGETS for the meshes that need them, so
+        // the rigid body parts (torso/head/limbs) compile down to the exact
+        // same plain transform as before — a safe superset, not a rewrite.
         vertexShader: `
+            #include <common>
+            #include <morphtarget_pars_vertex>
+            #include <skinning_pars_vertex>
+
             varying vec3 vNormal;
             varying vec3 vViewPosition;
 
             void main() {
-                vNormal = normalize(normalMatrix * normal);
-                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                #include <beginnormal_vertex>
+                #include <morphnormal_vertex>
+                #include <skinbase_vertex>
+                #include <skinnormal_vertex>
+                #include <defaultnormal_vertex>
+
+                vNormal = normalize(transformedNormal);
+
+                #include <begin_vertex>
+                #include <morphtarget_vertex>
+                #include <skinning_vertex>
+                #include <project_vertex>
+
                 vViewPosition = -mvPosition.xyz;
-                gl_Position = projectionMatrix * mvPosition;
             }
         `,
         fragmentShader: `
