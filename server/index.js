@@ -34,6 +34,7 @@ const dashboardStats = require('./dashboardStats');
 const { renderDashboardPage } = require('./dashboardPage');
 const documents = require('./documents');
 const applyChange = require('./applyChange');
+const backupScheduler = require('./backupScheduler');
 
 // Constant-time string compare — avoids leaking the API key one byte at a time
 // via response-timing differences when Terminus is exposed beyond localhost.
@@ -494,9 +495,14 @@ setTimeout(() => {
 
 // --- Boot ---
 (async () => {
-  // Restore her permanent memory FIRST, so her self-written skills + learned
-  // lessons are on disk before the first request reads them. This is what makes
-  // her growth survive a restart of her free host.
+  // Heal a wiped host FIRST: on Render (and any disk-wiping redeploy) her
+  // memory DB, .agent-memory/ and identity/ are gone on boot. If they're
+  // missing, pull her latest Drive snapshot back into place BEFORE anything
+  // reads memory — so she wakes up as herself. No-ops if her memory is already
+  // present or Drive isn't configured. (Synchronous by design.)
+  backupScheduler.restoreOnBoot();
+  // Restore her permanent memory (Supabase mirror) too, so her self-written
+  // skills + learned lessons are on disk before the first request reads them.
   await persist.restore();
   await drive.init();
   // Without an API key the server only ever binds to localhost, so an open
@@ -507,5 +513,9 @@ setTimeout(() => {
     console.log(`[terminus] Kortana's Terminus server online at ${host}:${PORT}.`);
     if (!API_KEY) console.warn('[terminus] TERMINUS_API_KEY not set — bound to localhost only. Set a key to allow other devices to connect.');
     persist.startAutosave();   // keep her permanent memory current as she grows
+    // Snapshot the WHOLE her (memory DB + agent-memory + identity) to Drive on
+    // a timer, so an always-on host backs her up without any external cron.
+    // A redeploy can then only ever lose minutes, never her.
+    backupScheduler.startAutoBackup();
   });
 })();
