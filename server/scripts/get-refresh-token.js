@@ -29,7 +29,7 @@
 require('dotenv').config();
 
 const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } = process.env;
-const SCOPE = 'https://www.googleapis.com/auth/drive';
+const SCOPE = 'https://www.googleapis.com/auth/drive.file'; // device flow only allows a limited scope set; drive.file (files this app creates — her backups) is allowed and is all the backup needs
 const DEVICE_CODE_URL = 'https://oauth2.googleapis.com/device/code';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
