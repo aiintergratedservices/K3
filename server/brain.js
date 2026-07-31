@@ -541,7 +541,12 @@ async function askChain(chain, systemPrompt, history, message) {
   for (const ask of chain) {
     if (Date.now() > deadline) break;
     const r = await ask(systemPrompt, history, message);
-    if (r) return r;
+    if (r) {
+      // Announce which brain actually answered, so a glance at the log proves
+      // she's thinking with a real core (e.g. groq:…) and not the phone model.
+      console.log(`[brain] replied via ${r.core || 'unknown'}`);
+      return r;
+    }
   }
   return null;
 }
