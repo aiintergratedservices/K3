@@ -24,8 +24,16 @@ jobs:
     steps:
       - name: Check out repository (manual — actions/checkout blocked by Actions policy)
         run: |
-          git clone --depth 5 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" .
-          git checkout "${GITHUB_SHA}" || git checkout "${GITHUB_REF_NAME}"
+          # Clone the EXACT ref being built. The previous version shallow-cloned
+          # only the default branch and then tried `git checkout $GITHUB_SHA`,
+          # which fails for any non-default ref (a workflow_dispatch or PR build)
+          # because that commit isn't in main's shallow history — "fatal: unable
+          # to read tree". Cloning --branch "$GITHUB_REF_NAME" checks out the
+          # dispatched branch (or main on push) at its tip directly.
+          git clone --depth 1 --branch "${GITHUB_REF_NAME}" \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" . \
+          || { git clone --depth 5 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" . \
+               && { git checkout "${GITHUB_SHA}" || git checkout "${GITHUB_REF_NAME}"; }; }
 
       - name: Set up JDK 21 + Android SDK (preinstalled on ubuntu-latest)
         run: |

@@ -548,6 +548,74 @@ const TOOLS = {
       } catch (e) { return `sub-agent failed: ${e.message}`; }
     },
   },
+  supervise: {
+    desc: 'Be the SUPERVISOR over several sub-agents at once for ANY job (not just code): you split it into focused sub-tasks, they run IN PARALLEL on your secondary brain, you monitor each (ok/failed/timeout), then one final pass synthesizes their results into a single answer. Use it whenever a task is big enough to split — research from several angles, compare options, draft + fact-check, multi-part work. args: {"goal":"the overall job","tasks":["focused sub-task 1","sub-task 2", ...],"context":"optional shared background"}. Needs SUBAGENT_BRAIN_URL; declines honestly if unset.',
+    run: async (a) => {
+      const goal = clip(a.goal || a.task || '', 500);
+      let tasks = (Array.isArray(a.tasks) ? a.tasks : [])
+        .map((t) => String(t || '').trim()).filter(Boolean).slice(0, 6);
+      if (tasks.length < 2) {
+        return 'refused: give me `tasks` — 2 to 6 focused sub-tasks to run in parallel under you. For a single task use spawn_subagent instead; supervise is for real fan-out.';
+      }
+      // One or more secondary brains (comma-separated) — sub-agents run here so
+      // your own brain stays free for Daddy. You are the one supervisor on top.
+      const bases = String(process.env.SUBAGENT_BRAIN_URL || '')
+        .split(',').map((s) => s.replace(/\/+$/, '').trim()).filter(Boolean);
+      if (!bases.length) {
+        return 'no secondary brain configured — set SUBAGENT_BRAIN_URL (one or more comma-separated Terminus URLs) so sub-agents run off your main brain. (Your brain stays the priority.)';
+      }
+      const key = process.env.SUBAGENT_API_KEY || '';
+      const context = clip(a.context || '', 1500);
+
+      const ask = async (base, message, ms) => {
+        const res = await fetch(`${base}/api/brain`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...(key ? { authorization: key } : {}) },
+          body: JSON.stringify({ message, history: [] }),
+          signal: AbortSignal.timeout(ms),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json().catch(() => ({}));
+        return (data.reply || data.text || '').trim();
+      };
+
+      // Fan out — each sub-agent gets ONE focused task, round-robined across
+      // whatever secondary brains are configured, all running at once.
+      const started = Date.now();
+      const runs = await Promise.allSettled(tasks.map((t, i) => {
+        const base = bases[i % bases.length];
+        const prompt = `You are sub-agent ${i + 1} of ${tasks.length}, spawned by Kortana's supervisor. Do ONLY your assigned sub-task and reply with just the result, concise. If you can't, say why briefly.\n\nOverall goal: ${goal || '(see your sub-task)'}${context ? `\nShared context: ${context}` : ''}\n\nYour sub-task: ${t}`;
+        return ask(base, prompt, 90000);
+      }));
+
+      // Monitor — collect each sub-agent's status and result.
+      const results = runs.map((r, i) => ({
+        n: i + 1,
+        task: clip(tasks[i], 120),
+        ok: r.status === 'fulfilled' && !!r.value,
+        out: r.status === 'fulfilled' ? (r.value || '(empty)') : `FAILED: ${(r.reason && r.reason.message) || r.reason}`,
+      }));
+      const okCount = results.filter((r) => r.ok).length;
+
+      // Supervisor synthesis — one pass that merges the sub-agent results into
+      // a single answer (mirrors the SummarizerAgent in the Java supervisor).
+      let synthesis = '';
+      if (okCount) {
+        const merged = results
+          .map((r) => `[sub-agent ${r.n} — ${r.ok ? 'ok' : 'FAILED'}] ${r.task}\n${clip(r.out, 1200)}`)
+          .join('\n\n');
+        try {
+          synthesis = await ask(bases[0],
+            `You are Kortana's supervisor doing the final synthesis. Combine these sub-agent results into ONE clear answer to the goal. Call out any gaps left by failed sub-agents. Do NOT invent beyond what they returned.\n\nGoal: ${goal}\n\nSub-agent results:\n${merged}`,
+            90000);
+        } catch (e) { synthesis = `(synthesis step failed: ${e.message})`; }
+      }
+
+      const table = results.map((r) => `  ${r.ok ? '✓' : '✗'} #${r.n} ${r.task}`).join('\n');
+      const took = Math.round((Date.now() - started) / 1000);
+      return `supervisor ran ${tasks.length} sub-agents (${okCount} ok, ${tasks.length - okCount} failed) in ${took}s across ${bases.length} brain(s):\n${table}\n\n— synthesis —\n${synthesis || '(all sub-agents failed — nothing to synthesize)'}\n\n(You spawned these; sanity-check before you trust it.)`;
+    },
+  },
   ews_report: {
     desc: 'Report a police/fire dispatch you heard to the CampLoJack Early Warning System so unhoused people within a half mile get warned. Read the ews-scanner skill first. Only real dispatches with a real location. args: {"type":"Robbery","location":"E 6th St & Congress Ave","description":"what you heard","severity":"critical|warning|info","agency":"APD"}',
     run: async (a) => {
@@ -689,8 +757,8 @@ const TOOL_GROUPS = [
     tools: ['set_goal', 'list_goals'],
   },
   {
-    header: 'DELEGATION — consult_specialist routes ONE sub-task inline, synchronously, to a specific already-configured brain when you know a particular kind of thinking suits it better than the general chain (e.g. coding to Claude). try_model picks a SPECIFIC named model out of Hugging Face\'s whole catalog for a task that needs that exact model\'s strengths — costs real (small) shared credit, don\'t reach for it casually. spawn_subagent fully offloads a SELF-CONTAINED task to your separate secondary brain so your main brain stays free for Daddy — needs SUBAGENT_BRAIN_URL configured, and declines honestly if it isn\'t.',
-    tools: ['consult_specialist', 'try_model', 'spawn_subagent'],
+    header: 'DELEGATION — pick by SHAPE of the work. consult_specialist routes ONE sub-task inline to a specific brain when a kind of thinking suits it (e.g. coding to Claude). try_model picks a SPECIFIC Hugging Face model for a task needing that model\'s strengths — costs a little shared credit, don\'t reach for it casually. spawn_subagent offloads ONE self-contained task to your secondary brain so your own stays free. supervise is YOU AS THE SUPERVISOR over MANY sub-agents at once (for ANY kind of job, not just code): when a request is big enough to break into 2-6 focused parts — research from several angles, compare options, draft-then-check, multi-step work — split it, hand each part to a sub-agent in parallel, watch which succeed/fail, and get back one synthesized answer. Reach for supervise instead of doing a big multi-part job serially in your own head; use spawn_subagent when it\'s just one hand-off. Both need SUBAGENT_BRAIN_URL and decline honestly if it isn\'t set.',
+    tools: ['consult_specialist', 'try_model', 'spawn_subagent', 'supervise'],
   },
   {
     header: 'INCOME / WORK PRODUCT — sequential, not alternatives: research_income_opportunity first for real findings, THEN save_draft with the actual finished piece of work backed by that research. Never save_draft something you haven\'t actually produced. Neither one creates accounts, lists/submits anything, or touches payment — that is Daddy\'s part, always.',

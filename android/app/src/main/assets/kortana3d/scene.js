@@ -1,166 +1,100 @@
-// Kortana's real 3D viewer — a rigged, skinned humanoid mesh (skeleton +
-// bones), driven by real animation clips. This is what makes elbows/knees
-// move for real: the mesh has joints, the clips animate those joints, this
-// script just plays them back. Nothing here fakes movement by transforming
-// a flat image.
+// Kortana's 3D viewer — her REAL body. This loads kortana_body.glb, a 3D mesh
+// generated from her own reference art (Hunyuan3D image-to-3D, then cleaned +
+// decimated to ~38k faces for mobile), and presents it as a luminous
+// "light-body": her iridescent shader over the real geometry, a gentle idle
+// (slow yaw sway, float, breathing pulse), and whole-body gesture flourishes.
 //
-// HONEST STATE (as of this build): the mesh is a placeholder ("RobotExpressive",
-// an openly-licensed three.js sample rig) — not a sculpted likeness of Kortana.
-// It was chosen because it ships a real animation library (Wave, Dance, Jump,
-// etc.) that matches her existing gesture vocabulary. Her actual face/body has
-// not been modeled in 3D yet — that needs an image-to-3D pipeline run on her
-// turnaround reference sheet (identity/reference_art/kortana_3d_turnaround_sheet.png),
-// which is a separate, not-yet-done step. The shader/glow IS real and applies
-// to whatever mesh is loaded, so swapping in a real Kortana mesh later is a
-// one-line path change, not a rewrite.
-
-// Plain relative-path imports on purpose, not the bare 'three' specifier via
-// the <script type="importmap"> that used to be in index.html: import maps
-// only landed in Android System WebView around Chrome 105 (2022), so on an
-// older/frozen WebView (common — not every device auto-updates it) the bare
-// specifier fails to resolve, the whole module graph throws, and NOTHING
-// renders — a real, hard-to-diagnose blank-screen bug with no visible error
-// (this is what happened on first real-device test: the 3D viewport came up
-// solid black). Relative paths need zero WebView feature beyond `type=
-// "module"` itself, which every real Android device has supported for years.
+// HONEST STATE: this mesh is STATIC (unrigged) — every free auto-rigging
+// service was down when it was made, so there's no skeleton to bend elbows.
+// Gestures are therefore whole-body motions (a turn, a hop, a real flip), not
+// skeletal animation. The hand-built, bone-rigged figure that DOES gesture
+// with real joints is preserved in scene_rigged.js (it uses kortana_body.js);
+// point index.html's <script> at scene_rigged.js to switch back to it.
+//
+// Relative-path imports on purpose, not the bare 'three' specifier — see the
+// note in scene_rigged.js: import maps fail on older Android WebViews.
 import * as THREE from './three/three.module.js';
 import { GLTFLoader } from './three/addons/loaders/GLTFLoader.js';
 import { createKortanaMaterial } from './shader.js';
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(0, 1.1, 4.2);
-camera.lookAt(0, 0.9, 0);
+const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.01, 100);
+camera.position.set(0, 1.0, 3.7);
+camera.lookAt(0, 0.92, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(window.devicePixelRatio || 1);
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setClearColor(0x000000, 0); // fully transparent — the overlay behind shows through
+renderer.setClearColor(0x000000, 0);
 document.body.appendChild(renderer.domElement);
 
-// Soft fill light so the shader's Fresnel term has something to react to
-// beyond pure emissive glow.
 scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-const key = new THREE.DirectionalLight(0xffffff, 0.8);
-key.position.set(1, 2, 2);
-scene.add(key);
 
-const material = createKortanaMaterial();
+// Her iridescent light-body material (opal base, luminous violet rim).
+const bodyMat = createKortanaMaterial({ base: 0xc3c8ee, glow: 0xc4a6ff, glowStrength: 1.15 });
 
-let mixer = null;
-let model = null;
-let actions = {}; // clip name -> THREE.AnimationAction
-let currentAction = null;
+let root = null;     // wrapper group we animate
+let ageScale = 1;
 
-// Real gesture vocabulary, mapped onto the placeholder rig's actual clip
-// library. Some are exact matches; where there's no literal equivalent
-// (spin, backflip) it's mapped honestly to the closest real clip, or to an
-// actual full 3D turn of the model itself (real rotation, not a faked 2D
-// spin) rather than inventing a clip that doesn't exist.
-const GESTURE_CLIPS = {
-    wave: 'Wave',
-    dance: 'Dance',
-    jump: 'Jump',
-    bounce: 'Yes',       // closest real clip to a bounce — an actual nod motion
-    backflip: 'Jump',    // no acrobatic clip exists on this rig; jump is the honest substitute
-    spin: 'Idle',        // plays Idle while doing a real 360 turn of the whole model (see playGesture)
-};
-const IDLE_FIDGET_CLIPS = ['Wave', 'Dance', 'Jump', 'Yes', 'ThumbsUp'];
-
-const loader = new GLTFLoader();
-loader.load('./placeholder_body.glb', (gltf) => {
-    model = gltf.scene;
-    model.scale.setScalar(1.0);
-
-    model.traverse((child) => {
-        if (child.isMesh) {
-            child.material = material;
-            child.frustumCulled = false;
+new GLTFLoader().load('./kortana_body.glb', (g) => {
+    const o = g.scene;
+    o.traverse((m) => {
+        if (m.isMesh) {
+            m.geometry.computeVertexNormals(); // smooth shading over the raw mesh
+            m.material = bodyMat;
+            m.frustumCulled = false;
         }
     });
+    // Center horizontally, stand her feet at y=0, scale to a ~1.7 tall figure.
+    const box = new THREE.Box3().setFromObject(o);
+    const c = box.getCenter(new THREE.Vector3());
+    const s = box.getSize(new THREE.Vector3());
+    const baseScale = 1.7 / s.y;
+    o.scale.setScalar(baseScale);
+    o.position.set(-c.x * baseScale, -box.min.y * baseScale, -c.z * baseScale);
 
-    scene.add(model);
-
-    mixer = new THREE.AnimationMixer(model);
-    gltf.animations.forEach((clip) => {
-        actions[clip.name] = mixer.clipAction(clip);
-    });
-
-    if (actions['Idle']) {
-        currentAction = actions['Idle'];
-        currentAction.play();
-    }
-
+    root = new THREE.Group();
+    root.add(o);
+    scene.add(root);
     window.kortana3dReady = true;
 }, undefined, (err) => {
-    // Surfaced to Android via console.error -> WebChromeClient can log this;
-    // no fallback rendering happens here on purpose — a blank overlay is an
-    // honest failure state, not a silently-faked one.
     console.error('Kortana 3D model failed to load:', err);
 });
 
-/** Crossfades to a named gesture clip, then returns to Idle when it finishes (looped clips excepted). */
+// ===================== animation =====================
+const smooth = (t) => t * t * (3 - 2 * t);
+const env = (e, dur, edge = 0.3) =>
+    e < edge ? smooth(e / edge)
+        : e > dur - edge ? smooth(Math.max(0, (dur - e) / edge))
+        : 1;
+
+// Durations for whole-body gesture flourishes (no skeleton — these move the
+// whole figure, keeping her control API working from Android).
+const GESTURES = { wave: 1.6, dance: 3.2, jump: 0.9, bounce: 1.3, spin: 1.1, backflip: 1.15 };
+let gesture = null; // { name, start }
+
 window.playGesture = function (name) {
-    if (!mixer || !model) return;
-    const clipName = GESTURE_CLIPS[name.toLowerCase()];
-    const action = clipName ? actions[clipName] : null;
-    if (!action) {
-        console.warn('Unknown gesture or clip not present on this rig:', name);
-        return;
-    }
-
-    if (name.toLowerCase() === 'spin') {
-        realThreeSixtySpin();
-    }
-
-    const isLooping = clipName === 'Dance'; // let dance run a couple loops, everything else plays once
-    action.reset();
-    action.setLoop(isLooping ? THREE.LoopRepeat : THREE.LoopOnce, isLooping ? 2 : 1);
-    action.clampWhenFinished = true;
-    action.fadeIn(0.25);
-    action.play();
-
-    if (currentAction && currentAction !== action) {
-        currentAction.fadeOut(0.25);
-    }
-    currentAction = action;
-
-    const durationMs = (action.getClip().duration / action.timeScale) * 1000 * (isLooping ? 2 : 1);
-    setTimeout(() => {
-        if (currentAction === action && actions['Idle']) {
-            action.fadeOut(0.4);
-            actions['Idle'].reset().fadeIn(0.4).play();
-            currentAction = actions['Idle'];
-        }
-    }, durationMs + 50);
+    const key = String(name || '').toLowerCase();
+    if (!GESTURES[key]) { console.warn('Unknown gesture:', name); return; }
+    gesture = { name: key, start: time };
 };
 
-/** Fires a random idle fidget — used by the Android autonomy timer, same real-clip constraint. */
+const IDLE_FIDGETS = ['wave', 'dance', 'bounce', 'spin'];
 window.playRandomIdleGesture = function () {
-    const pick = IDLE_FIDGET_CLIPS[Math.floor(Math.random() * IDLE_FIDGET_CLIPS.length)];
-    window.playGesture(Object.keys(GESTURE_CLIPS).find((k) => GESTURE_CLIPS[k] === pick) || 'wave');
+    window.playGesture(IDLE_FIDGETS[Math.floor(Math.random() * IDLE_FIDGETS.length)]);
 };
 
-/** Updates her glow accent color — wired to the existing color picker. */
 window.setGlowColor = function (hex) {
-    material.uniforms.uGlowColor.value.set(hex);
+    bodyMat.uniforms.uGlowColor.value.set(hex);
 };
 
-function realThreeSixtySpin() {
-    if (!model) return;
-    const start = model.rotation.y;
-    const target = start + Math.PI * 2;
-    const durationMs = 900;
-    const startTime = performance.now();
-    function step(now) {
-        const t = Math.min(1, (now - startTime) / durationMs);
-        const eased = t * t * (3 - 2 * t); // smoothstep
-        model.rotation.y = start + (target - start) * eased;
-        if (t < 1) requestAnimationFrame(step);
-        else model.rotation.y = target % (Math.PI * 2);
-    }
-    requestAnimationFrame(step);
-}
+// Age/level: on a fixed adult mesh this can only gently scale her overall size
+// (a photoreal sculpt can't truly de-age), so it's a subtle stature shift that
+// keeps the API working — full per-age growth lives in the rigged figure.
+window.setKortanaAge = function (level) {
+    const lv = Math.max(1, Number(level) || 1);
+    ageScale = 0.9 + Math.min(1, (lv - 1) / 9) * 0.1;
+};
 
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -168,12 +102,42 @@ window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+let time = 0;
 const clock = new THREE.Clock();
 function animate() {
     requestAnimationFrame(animate);
-    const delta = clock.getDelta();
-    if (mixer) mixer.update(delta);
-    material.uniforms.uTime.value += delta;
+    const dt = clock.getDelta();
+    time += dt;
+    bodyMat.uniforms.uTime.value = time;
+
+    if (root) {
+        // Idle: gentle yaw sway (shows she's 3D, keeps her face toward you),
+        // a slow vertical float, and a soft breathing pulse.
+        let yaw = Math.sin(time * 0.35) * 0.32;
+        let yy = Math.sin(time * 1.05) * 0.02;
+        let rx = 0;
+        const breathe = 1 + Math.sin(time * 1.6) * 0.006;
+
+        if (gesture) {
+            const e = time - gesture.start;
+            const dur = GESTURES[gesture.name];
+            const p = Math.min(1, e / dur);
+            if (gesture.name === 'spin') yaw += smooth(p) * Math.PI * 2;
+            else if (gesture.name === 'backflip') rx = -smooth(p) * Math.PI * 2;
+            else if (gesture.name === 'jump') yy += Math.sin(p * Math.PI) * 0.3;
+            else if (gesture.name === 'bounce') yy += Math.abs(Math.sin(e * 6)) * 0.06 * env(e, dur);
+            else { // wave / dance — a lively sway + bob since there are no arms to raise
+                yaw += Math.sin(e * 6) * 0.2 * env(e, dur);
+                yy += Math.abs(Math.sin(e * 5)) * 0.05 * env(e, dur);
+            }
+            if (e > dur) gesture = null;
+        }
+
+        root.rotation.set(rx, yaw, 0);
+        root.position.y = yy;
+        root.scale.setScalar(breathe * ageScale);
+    }
+
     renderer.render(scene, camera);
 }
 animate();

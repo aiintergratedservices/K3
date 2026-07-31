@@ -7,7 +7,7 @@ FROM node:20-slim
 # bash + git + curl so the self-run agent harness and the allowlisted shell/
 # web tools work inside the container.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends bash git curl ca-certificates \
+ && apt-get install -y --no-install-recommends bash git curl ca-certificates zip unzip \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
