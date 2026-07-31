@@ -36,7 +36,7 @@ const bodyMat = createKortanaMaterial({ base: 0xc3c8ee, glow: 0xc4a6ff, glowStre
 let root = null;     // wrapper group we animate
 let ageScale = 1;
 
-new GLTFLoader().load('./kortana_body.glb', (g) => {
+function onBody(g) {
     const o = g.scene;
     o.traverse((m) => {
         if (m.isMesh) {
@@ -57,9 +57,35 @@ new GLTFLoader().load('./kortana_body.glb', (g) => {
     root.add(o);
     scene.add(root);
     window.kortana3dReady = true;
-}, undefined, (err) => {
-    console.error('Kortana 3D model failed to load:', err);
-});
+}
+
+// Android WebView note: fetch() CANNOT read file:// assets — it throws
+// "TypeError: Failed to fetch" — and three r160's GLTFLoader.load() fetches
+// internally, which is why her body wouldn't load. XHR *can* read file:// here
+// (the WebView enables allowFileAccessFromFileURLs), so we pull the .glb bytes
+// ourselves via XMLHttpRequest and hand them to GLTFLoader.parse(). The .glb is
+// a self-contained binary (buffers embedded), so parse() needs no further I/O.
+function loadLocalArrayBuffer(url) {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.responseType = 'arraybuffer';
+        // file:// responses report status 0 but still deliver the body.
+        xhr.onload = () => {
+            if (xhr.status === 0 || (xhr.status >= 200 && xhr.status < 300)) resolve(xhr.response);
+            else reject(new Error('HTTP ' + xhr.status + ' loading ' + url));
+        };
+        xhr.onerror = () => reject(new Error('could not read ' + url + ' (XHR error)'));
+        xhr.send();
+    });
+}
+
+loadLocalArrayBuffer('./kortana_body.glb')
+    .then((buf) => new Promise((res, rej) => new GLTFLoader().parse(buf, './', res, rej)))
+    .then(onBody)
+    .catch((err) => {
+        console.error('Kortana 3D model failed to load:', (err && err.message) || err);
+    });
 
 // ===================== animation =====================
 const smooth = (t) => t * t * (3 - 2 * t);

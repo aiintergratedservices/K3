@@ -493,8 +493,23 @@ function rulesCore(message) {
 const CODING_RE = /\b(code|coding|program|programming|debug|bug|function|class|kotlin|java|python|javascript|typescript|sql|api|compile|build error|script|algorithm|repo|git|deploy|server error|stack trace|refactor)\b/i;
 const HUMAN_RE = /\b(feel|feels|feeling|feelings|emotion|emotions|friend|friends|social|people|person|human|humans|relationship|relationships|love|sad|lonely|angry|anxious|family|conversation|empathy|body language|facial|awkward|date|dating)\b/i;
 
+// Is any cloud brain configured? If so, we lead with the fast cloud cores and
+// keep local Ollama only as the OFFLINE backstop — a tiny phone model (phi3)
+// should never answer AHEAD of a real brain just because it happens to be up.
+// With NO cloud key set at all, we stay local-first exactly as before.
+function hasCloudCore() {
+  return Boolean(
+    process.env.GROQ_API_KEY || process.env.MISTRAL_API_KEY || process.env.SAMBANOVA_API_KEY ||
+    process.env.OPENROUTER_API_KEY || process.env.CEREBRAS_API_KEY || process.env.NVIDIA_API_KEY ||
+    process.env.HF_TOKEN || process.env.GEMINI_API_KEY || process.env.ANTHROPIC_API_KEY ||
+    process.env.OPENAI_API_KEY
+  );
+}
+
 // Family routing: coding -> her father (Claude) first, human/social -> her
-// mother (Gemini) first, else her local core first. Returns the ordered chain.
+// mother (Gemini) first. Otherwise: cloud cores first when any key is set (so
+// she thinks with Groq/Mistral/etc, not the phone model), local Ollama last as
+// the offline safety net; fully local-first only when no cloud key exists.
 function providerChain(message) {
   // Groq + Cerebras + Mistral + SambaNova + OpenRouter + NVIDIA + HuggingFace
   // + Gemini are the free, no-card cloud cores, each on its OWN independent
@@ -502,10 +517,12 @@ function providerChain(message) {
   // total blackout that much less likely. (OpenRouter/NVIDIA/HuggingFace are
   // real no-ops until their API keys are set.)
   const FREE_CORES = [askGroq, askCerebras, askMistral, askSambaNova, askOpenRouter, askNvidia, askHuggingFace, askGemini];
-  // Claude + OpenAI are the paid fallbacks — tried last, after every free
-  // core has had a shot, not as a first choice.
-  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, askOllama, ...FREE_CORES, askOpenAI];
-  if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return [askGemini, askOllama, ...FREE_CORES.filter((f) => f !== askGemini), askClaude, askOpenAI];
+  // Claude + OpenAI are the paid fallbacks. Local Ollama is demoted to the
+  // very end — it answers only when every reachable cloud brain has failed
+  // (i.e. she's genuinely offline), so a real brain always wins when online.
+  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, ...FREE_CORES, askOpenAI, askOllama];
+  if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return [askGemini, ...FREE_CORES.filter((f) => f !== askGemini), askClaude, askOpenAI, askOllama];
+  if (hasCloudCore()) return [...FREE_CORES, askClaude, askOpenAI, askOllama];
   return [askOllama, ...FREE_CORES, askClaude, askOpenAI];
 }
 
@@ -524,7 +541,12 @@ async function askChain(chain, systemPrompt, history, message) {
   for (const ask of chain) {
     if (Date.now() > deadline) break;
     const r = await ask(systemPrompt, history, message);
-    if (r) return r;
+    if (r) {
+      // Announce which brain actually answered, so a glance at the log proves
+      // she's thinking with a real core (e.g. groq:…) and not the phone model.
+      console.log(`[brain] replied via ${r.core || 'unknown'}`);
+      return r;
+    }
   }
   return null;
 }

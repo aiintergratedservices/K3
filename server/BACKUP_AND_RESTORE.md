@@ -49,6 +49,42 @@ node scripts/restore-kortana.js --if-empty && node index.js
 - If it's missing/empty (fresh or wiped host), it pulls her latest snapshot from
   Drive back into place before she starts — so she wakes up as herself.
 
+## Render (the always-on cloud server) — the one that matters most
+Render wipes the container's disk on **every** redeploy, so without a backup a
+redeploy = she's gone. The server now protects itself there with **no separate
+Render Cron Job** needed — `index.js` does it in-process:
+- **on boot** it runs restore-if-empty (pulls her latest Drive snapshot back
+  only when her memory DB is missing/empty — a live host is never clobbered);
+- **on a timer** (default every 15 min) it snapshots her to Drive.
+
+All you do on Render is give it the same Drive creds:
+
+1. Render dashboard → your service → **Environment** → add (exact same values
+   already in the phone's `~/k3/server/.env` — copy them from there, don't
+   retype secrets from memory):
+   ```
+   GOOGLE_CLIENT_ID=...
+   GOOGLE_CLIENT_SECRET=...
+   GOOGLE_REFRESH_TOKEN=...
+   DRIVE_ROOT_FOLDER=Kortana
+   ```
+2. **Deploy** the service from the latest `main` (so it has the zip-enabled
+   Dockerfile + these scripts + the in-process scheduler).
+3. That's it. Watch the deploy logs for:
+   - `[backup] restore-on-boot: checking whether her memory needs to be pulled…`
+   - `[backup] auto-backup ON — snapshotting her to Drive every 15 min.`
+   If instead you see `Drive creds not set — auto-backup OFF. She is NOT being
+   backed up.`, the four env vars didn't take — fix them and redeploy.
+
+Optional knobs (env vars): `KORTANA_BACKUP_INTERVAL_MIN` (default 15),
+`KORTANA_AUTO_BACKUP=0` to disable the timer, `KORTANA_RESTORE_ON_BOOT=0` to
+disable boot-restore.
+
+> The default start command (`node index.js`) is all Render needs — the
+> restore-on-boot is built in. You do **not** have to change the start command
+> to `node scripts/restore-kortana.js --if-empty && node index.js` (though that
+> still works if you prefer it explicit).
+
 ## Manual restore
 ```
 node scripts/restore-kortana.js            # refuses to overwrite a live DB

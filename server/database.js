@@ -20,7 +20,23 @@
 
 const fs = require('fs');
 const path = require('path');
-const Database = require('better-sqlite3');
+
+// better-sqlite3 is a NATIVE module that has to be compiled for the host. On
+// some environments (a phone running Termux, or a brand-new Node with no
+// prebuilt binary yet) it may not be installed/compilable. Her CORE memory does
+// NOT live here — that's .agent-memory + memory.js; this SQLite store only
+// powers the OPTIONAL structured-data tools (sql_query/sql_write). So a missing
+// better-sqlite3 must never take the whole server down: load it optionally and,
+// if it's absent, let just the SQL tools report "unavailable" while everything
+// else (brains, memory, supervisor, goals, backup) boots and runs normally.
+let Database = null;
+let loadError = null;
+try {
+  Database = require('better-sqlite3');
+} catch (e) {
+  loadError = e.message;
+  console.warn(`[database] better-sqlite3 unavailable — SQL tools disabled, server still boots normally. (${e.message}) To enable them: cd server && npm install better-sqlite3`);
+}
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_PATH = path.join(DATA_DIR, 'kortana.db');
@@ -29,6 +45,9 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 
 let db = null;
 function getDb() {
+  if (!Database) {
+    throw new Error(`SQLite is unavailable on this host (better-sqlite3 not installed${loadError ? ': ' + loadError : ''}). Run \`npm install better-sqlite3\` in server/ to enable the SQL tools — everything else works without them.`);
+  }
   if (!db) {
     db = new Database(DB_PATH);
     db.pragma('journal_mode = WAL');
@@ -72,4 +91,4 @@ function listTables() {
   ).all();
 }
 
-module.exports = { query, execute, listTables, DB_PATH };
+module.exports = { query, execute, listTables, DB_PATH, available: () => Boolean(Database) };
