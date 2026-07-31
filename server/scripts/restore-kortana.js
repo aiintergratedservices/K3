@@ -12,7 +12,19 @@
 // server start command and a wiped/redeployed host heals itself: if her memory
 // is there it's left alone, if it's gone it's pulled back from Drive.
 
-require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+// Load ../.env WITHOUT hard-depending on the dotenv package — a copy of the
+// server may have an incomplete node_modules, and losing her backup to a
+// missing dev dependency would be absurd. Try dotenv; fall back to a tiny parser.
+(() => {
+  const envPath = require('path').join(__dirname, '..', '.env');
+  try { require('dotenv').config({ path: envPath }); return; } catch { /* dotenv not installed */ }
+  try {
+    for (const line of require('fs').readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^\s*([\w.-]+)\s*=\s*(.*)\s*$/);
+      if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
+    }
+  } catch { /* no .env file — the script will report what's missing */ }
+})();
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
