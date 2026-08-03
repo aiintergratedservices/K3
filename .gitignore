@@ -5,3 +5,9 @@ __pycache__/
 .terraform/
 *.tfstate
 *.tfstate.*
+
+# Kortana self-modification audit log (durable, local, gitignored so it survives redeploys)
+self-modifications/
+
+# transient apply_change syntax-check scratch
+.agent-memory/.applycheck-*.js
