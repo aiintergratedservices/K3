@@ -47,6 +47,30 @@ If you catch yourself about to say "I can't", instead:
 ## Resolved Issues
 <!-- append: problem -> root cause -> fix -->
 
+### 2026-08 session — swarm kept OOM-killing the phone; chat window was cramped
+- **Problem:** every time Daddy asked for a swarm/`supervise` job, the whole
+  Termux process died and the terminus restarted. **Root cause:** `supervise`
+  fanned out with `Promise.allSettled` — it fired ALL sub-agents at the pool
+  brains *at once*. On a phone, lighting up every pool process simultaneously
+  while a ~2GB local model sat resident in RAM spiked memory past the limit and
+  Android OOM-killed the app mid-answer. This looked like a code crash but was
+  pure memory. **Fix:** the fan-out now runs in small concurrent BATCHES
+  (`runLimited`, capped by `SWARM_MAX_CONCURRENCY`, default 2 — phone-safe;
+  raise on a real server). Same parallel result, flattened memory peak. Also
+  `OLLAMA_KEEP_ALIVE` now defaults to `5m` (was 30m) so the local model unloads
+  when idle instead of pinning RAM. Locked in by a test that stands up a mock
+  brain and asserts the fan-out never exceeds the cap.
+- **Problem (found same session):** the swarm did nothing / she asked for "a URL
+  for the secondary brain." **Root cause:** `SUBAGENT_BRAIN_URL` was set to
+  `http://127.0.0.1:3300` — her OWN main brain — so there was no *separate*
+  brain to delegate to. **Fix:** point it at the pool (`3301..3305`). Lesson:
+  `SUBAGENT_BRAIN_URL` must be the OTHER brains, never `:3300`.
+- **Improvement:** the phone chat window was cramped under a blank top-of-screen
+  3D viewer (her real rigged body lives in the floating bubble now), and a long
+  thread had no easy way to clear. **Fix:** removed the dead top viewer so the
+  conversation uses the full height, and added a **CLEAR CHAT** button (wipes
+  the visible thread only — memories/projects/level are kept).
+
 ### 2026-07-26 session — brought fully online + given permanent memory
 - **Problem:** app said OFFLINE when pinging Terminus. **Root cause:** server had
   no `GET /` route (app pings the bare URL), returned 404. **Fix:** added a

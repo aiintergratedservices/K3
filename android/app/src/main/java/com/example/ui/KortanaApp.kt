@@ -515,34 +515,14 @@ fun KortanaApp(
                 .padding(innerPadding)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Top: her real rigged 3D presence — the same WebView+Three.js
-                // viewer as the floating bubble (assets/kortana3d/), not the
-                // old flat cosmetic hologram. Given a smaller share of the
-                // screen than before so the chat window below gets more room.
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(0.8f)
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(CyberSpace, CyberCard.copy(alpha = 0.5f))
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Kortana3DView(
-                        activeColor = activeColor,
-                        isGenerating = isGenerating,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-
-                // Lower: Status & Interaction tabs — expanded relative to the
-                // 3D view above so the chat log has real breathing room.
+                // The old top-of-screen 3D viewer was removed — her rigged 3D
+                // body now lives in the floating bubble (KortanaBubbleService,
+                // assets/kortana3d/), so that space was just a blank gradient
+                // eating the screen. The conversation now gets the full height.
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1.6f)
+                        .weight(1f)
                         .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
                         .background(CyberCard)
                         .border(
@@ -609,7 +589,8 @@ fun KortanaApp(
                                 onStopAndSendRecordingAudio = { stopAndSendRecordingAudio() },
                                 onCancelRecordingAudio = { cancelRecordingAudio() },
                                 alwaysListeningActive = alwaysListeningActive,
-                                onAlwaysListeningToggle = onAlwaysListeningToggle
+                                onAlwaysListeningToggle = onAlwaysListeningToggle,
+                                onClearChat = { viewModel.clearChat() }
                             )
                             1 -> ProjectsCore(
                                 projects = projects,
@@ -905,11 +886,13 @@ fun ChatTerminal(
     onStopAndSendRecordingAudio: () -> Unit = {},
     onCancelRecordingAudio: () -> Unit = {},
     alwaysListeningActive: Boolean = false,
-    onAlwaysListeningToggle: (Boolean) -> Unit = {}
+    onAlwaysListeningToggle: (Boolean) -> Unit = {},
+    onClearChat: () -> Unit = {}
 ) {
     val listState = rememberLazyListState()
     var textInput by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    var showClearChatConfirm by remember { mutableStateOf(false) }
 
     // Auto-scroll list when message database expands
     LaunchedEffect(chatHistory.size, isGenerating) {
@@ -1136,6 +1119,39 @@ fun ChatTerminal(
                             uncheckedTrackColor = CyberSpace
                         ),
                         modifier = Modifier.scale(0.8f).testTag("intercom_toggle_switch")
+                    )
+                }
+            }
+        }
+
+        // Clear-chat control — only shown when there's something to clear.
+        // Wipes the visible thread (not memories/projects) so a long
+        // conversation can't slow her down or overflow her prompt.
+        if (chatHistory.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(
+                    onClick = { showClearChatConfirm = true },
+                    modifier = Modifier.testTag("clear_chat_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DeleteSweep,
+                        contentDescription = "Clear chat",
+                        tint = CyberTextMuted,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "CLEAR CHAT",
+                        color = CyberTextMuted,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
                     )
                 }
             }
@@ -1390,6 +1406,37 @@ fun ChatTerminal(
                 )
             }
         }
+    }
+
+    if (showClearChatConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearChatConfirm = false },
+            title = { Text("CLEAR CONVERSATION?", fontSize = 14.sp, fontFamily = FontFamily.Monospace, color = Color.White, fontWeight = FontWeight.Bold) },
+            text = { Text("This wipes the visible chat thread only. Your memories, projects, scripts, and her level are all kept safe. Clearing a long thread also lightens what she has to process each reply.", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = CyberTextMuted) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showClearChatConfirm = false
+                        onClearChat()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonViolet),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("CLEAR", color = Color.White, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                }
+            },
+            dismissButton = {
+                Button(
+                    onClick = { showClearChatConfirm = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = CyberBorder),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("CANCEL", color = Color.White, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                }
+            },
+            containerColor = CyberSpace,
+            modifier = Modifier.border(BorderStroke(1.dp, CyberBorder), shape = RoundedCornerShape(28.dp))
+        )
     }
 }
 

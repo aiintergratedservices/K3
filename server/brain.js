@@ -245,8 +245,11 @@ async function askOllama(systemPrompt, history, message) {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         // keep_alive holds the model in RAM between turns so she isn't reloading
-        // (and re-processing the whole prompt) on every single message.
-        body: JSON.stringify({ model, messages, stream: false, keep_alive: '30m' }),
+        // (and re-processing the whole prompt) on every single message. On a
+        // phone that resident ~2GB is exactly what tips a swarm into an OOM
+        // kill, so default to a short hold and let it unload when idle. Override
+        // with OLLAMA_KEEP_ALIVE (e.g. '30m' on a machine with RAM to spare).
+        body: JSON.stringify({ model, messages, stream: false, keep_alive: process.env.OLLAMA_KEEP_ALIVE || '5m' }),
         signal: AbortSignal.timeout(90000),
       });
       if (!res.ok) {
