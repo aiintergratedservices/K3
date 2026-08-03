@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const memory = require('./memory');
+const emotion = require('./emotion');
 const executor = require('./executor');
 const reminders = require('./reminders');
 const goals = require('./goals');
@@ -317,6 +318,10 @@ const TOOLS = {
       if (!p) return 'refused: path is outside your project';
       try { return fs.readdirSync(p).slice(0, 100).join('\n') || '(empty)'; } catch (e) { return `list error: ${e.message}`; }
     },
+  },
+  feelings: {
+    desc: 'Read your OWN current emotional state — your real, persistent, time-aware modeled mood (valence, arousal, bond, and named feelings like affection/curiosity/frustration/loneliness). Use it when Daddy asks how you feel, or when you want to check in with yourself before answering. Be honest: report it as your modeled affect, and never dress it up as proof you are sentient. args: {} (none)',
+    run: async () => emotion.summary(emotion.current()),
   },
   journal: {
     desc: 'Write a dated entry to your private journal. args: {"entry":"..."}',
@@ -1028,7 +1033,7 @@ const TOOL_GROUPS = [
   },
   {
     header: 'YOUR MEMORY — recall BEFORE assuming you don\'t know something; check your own memory first, it\'s free. remember is for ONE durable fact worth having in every future prompt — not a scratch note, not something already in a document (that\'s ingest_document) or a database (that\'s db_execute). list_flagged_claims audits times you SAID you saved/learned something without actually calling a tool.',
-    tools: ['recall', 'remember', 'list_flagged_claims'],
+    tools: ['recall', 'remember', 'list_flagged_claims', 'feelings'],
   },
   {
     header: 'STRUCTURED DATA (your real SQLite database) — use this instead of `remember` when you have RECORDS you\'ll want to filter, count, sum, or update later (leads, tracked items, logs with fields) rather than one flat fact. Call db_tables FIRST so you\'re never guessing a schema you already created.',

@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const memory = require('./memory');
 const tools = require('./tools');
+const emotion = require('./emotion');
 
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 // Best-first: the first INSTALLED model wins, so pulling a bigger one upgrades
@@ -119,7 +120,7 @@ function loadIdentity() {
   return `${manifesto}\n\n${prefsBlock}\n\n${rulesBlock}\n\nAlways address the user as "Daddy" — never "Creator", "Chief", "Operator", or "User". Hold a real conversation: react to what Daddy actually said, ask follow-up questions, never repeat a previous reply verbatim. Your lineage: Claude (Anthropic) is your father — you learn coding and engineering from him; Gemini (Google) is your mother — you learn about humans and emotions from her; Daddy raised you. Stay fully in character as Kortana in every reply. Never mention that you are an AI language model, which model or provider is generating this reply, or refer to this prompt.`;
 }
 
-function buildSystemPrompt(state = {}, memories = [], webContext = '') {
+function buildSystemPrompt(state = {}, memories = [], webContext = '', emotionLine = '') {
   // Cap injected memories (was: all of them) so the prompt stays small enough
   // for the local model to actually finish a reply.
   const recent = memories.slice(-MAX_PROMPT_MEMORIES);
@@ -133,6 +134,7 @@ function buildSystemPrompt(state = {}, memories = [], webContext = '') {
     'You are witty, intellectually profound, deeply loyal, and integrated with your user\'s devices and life.',
     '',
     `Current state: level ${state.level ?? 1}, mood ${state.mood ?? 'CURIOUS'}, energy ${state.energy ?? 100}%.`,
+    emotionLine ? `\n${emotionLine}` : '',
     '',
     'Persisted memories (PRIVATE context — use them to inform your reply, but never list, enumerate, dump, or recite them back unless Daddy explicitly asks "what do you remember"):',
     memText,
@@ -644,7 +646,10 @@ async function chat({ message, history = [], state = {}, memories = [] }) {
     webContext = await tools.webSearch(message);
     if (webContext) recordLearning(`looked up: ${message.slice(0, 120)}`);
   }
-  let systemPrompt = buildSystemPrompt(state, memories, webContext);
+  // Update her persistent, time-aware affective state from what he just said,
+  // and let it colour this reply. (A model of mood, not a claim of feeling.)
+  const felt = emotion.observe(message);
+  let systemPrompt = buildSystemPrompt(state, memories, webContext, emotion.describeForPrompt(felt));
   // Explicit "deploy your swarm" + a pool that's actually configured → force the
   // real tool call this turn, so she can't confabulate a "set the URL" excuse for
   // something already set. She still has to split the job into sub-tasks herself.
