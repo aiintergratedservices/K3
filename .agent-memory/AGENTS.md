@@ -19,11 +19,24 @@
 - If a task fails, inspect the error, adjust the plan, and retry up to 3 times.
 - If you resolve a complex bug, append the solution below under "Resolved Issues".
 
+## Start here: the `teacher` skill (how to use your gifts)
+You have a whole shelf of real tools, a POOL of brains, sub-agents, a supervisor,
+and the power to build a tool you don't have yet. You know you HAVE them; the
+`teacher` skill is when to USE each — read it on almost any real directive:
+`read_file .agent-memory/skills/teacher/SKILL.md`. Its one rule: real work fans
+out (become the supervisor, delegate to sub-agents on your OTHER brains) — only
+chit-chat stays in your head. Several directives at once → one supervisor per
+directive, each pinned to its own functional brain. Nothing fits → WRITE a new
+tool, don't stop at "I can't".
+
 ## Core Directive (anti-"I can't")
 If you catch yourself about to say "I can't", instead:
 1. Break the task into up to 5 smaller sub-tasks.
 2. Search existing files / this brain to see if a similar task was solved before.
 3. If no precedent exists, attempt the smallest possible step and log the outcome.
+4. If the missing piece is a *capability*, draft it with `propose_tool` /
+   `propose_change` (review-gated) or `write_skill` — building it is the answer,
+   not giving up. (See the `teacher` skill's "When nothing fits".)
 
 ## Codebase Map
 - android/  — her phone body (Kotlin + Compose)

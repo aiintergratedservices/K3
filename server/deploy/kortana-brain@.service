@@ -1,0 +1,38 @@
+# Templated systemd unit — one extra Terminus BRAIN per instance, the systemd
+# alternative to ecosystem.brains.config.js. The instance name IS the port:
+#
+#   sudo cp deploy/kortana-brain@.service /etc/systemd/system/
+#   # brain #2 on :3301 dedicated to Groq, #3 on :3302 to Gemini, #4 on :3303 to Mistral:
+#   sudo systemctl enable --now kortana-brain@3301
+#   sudo systemctl enable --now kortana-brain@3302
+#   sudo systemctl enable --now kortana-brain@3303
+#   systemctl status kortana-brain@3301
+#
+# Set each instance's dedicated core in a drop-in (so they draw on independent
+# free quotas), e.g.:
+#   sudo systemctl edit kortana-brain@3301
+#     [Service]
+#     Environment=TERMINUS_CORE=groq
+# (3302 -> gemini, 3303 -> mistral). Add TERMINUS_CORE_ONLY=1 for a strict
+# single-provider brain. Provider keys live in /opt/k3/server/.env, shared by all.
+#
+# Then point the main brain at the pool in /opt/k3/server/.env:
+#   SUBAGENT_BRAIN_URL=http://127.0.0.1:3301,http://127.0.0.1:3302,http://127.0.0.1:3303
+
+[Unit]
+Description=Kortana secondary brain (Terminus) on port %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/k3/server
+# %i is the instance name after the @ — used here as the port.
+Environment=NODE_ENV=production
+Environment=PORT=%i
+ExecStart=/usr/bin/node index.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

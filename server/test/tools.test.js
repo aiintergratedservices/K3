@@ -109,6 +109,32 @@ const ok = (m) => { console.log('  ✓', m); n++; };
   assert(r.ok && /valid date/.test(r.result));
   ok('time_until counts forward and rejects bad dates');
 
+  // --- supervise: brain selection / validation (no network) ---
+  const savedBrainUrl = process.env.SUBAGENT_BRAIN_URL;
+  delete process.env.SUBAGENT_BRAIN_URL;
+  r = await tools.runTool('supervise', { goal: 'g', tasks: ['a', 'b'] });
+  assert(r.ok && /no secondary brain configured/.test(r.result));
+  // .invalid TLD → guaranteed non-resolvable, so the health preflight marks
+  // both brains dead fast and deterministically (no real network dependency).
+  process.env.SUBAGENT_BRAIN_URL = 'http://b1.invalid, http://b2.invalid';
+  r = await tools.runTool('supervise', { goal: 'g', tasks: ['only one'] });
+  assert(r.ok && /refused: give me `tasks`/.test(r.result));
+  // Unknown brain → "isn't in your pool", and non-functional brains are shown
+  // marked "[needs a key]" (functional-first ordering).
+  r = await tools.runTool('supervise', { goal: 'g', tasks: ['a', 'b'], brain: '9' });
+  assert(r.ok && /isn't in your pool/.test(r.result) && /\[needs a key\]/.test(r.result));
+  r = await tools.runTool('supervise', { goal: 'g', tasks: ['a', 'b'], brain: 'nope' });
+  assert(r.ok && /isn't in your pool/.test(r.result));
+  // Pinning to a resolvable but non-functional brain is refused, never run on.
+  r = await tools.runTool('supervise', { goal: 'g', tasks: ['a', 'b'], brain: '1' });
+  assert(r.ok && /not functional right now/.test(r.result));
+  // Round-robin with nothing live declines honestly instead of returning noise.
+  r = await tools.runTool('supervise', { goal: 'g', tasks: ['a', 'b'] });
+  assert(r.ok && /none of your 2 secondary brain\(s\) are functional/.test(r.result));
+  if (savedBrainUrl == null) delete process.env.SUBAGENT_BRAIN_URL;
+  else process.env.SUBAGENT_BRAIN_URL = savedBrainUrl;
+  ok('supervise ranks functional brains first, health-checks the pin, and declines cleanly');
+
   // --- the agentic loop end-to-end with a mock model ---
   // Round 0: she asks for the time. Round 1: she answers using the result.
   let turn = 0;

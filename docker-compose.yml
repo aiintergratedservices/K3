@@ -49,6 +49,106 @@ services:
       - terminus-data:/app/data
     restart: unless-stopped
 
+  # Optional SECONDARY BRAIN POOL — extra Terminus instances she delegates to,
+  # so `supervise` can fan sub-agents across several INDEPENDENT brains at once
+  # and she can run one supervisor per directive without them contending. Each
+  # is dedicated to a different free provider (TERMINUS_CORE) so they draw on
+  # independent quotas. Off by default; bring the whole pool up with:
+  #   docker compose --profile pool up -d
+  # Then set in server/.env (inside the compose network they resolve by name):
+  #   SUBAGENT_BRAIN_URL=http://brain2:3300,http://brain3:3300,http://brain4:3300
+  # A brain whose provider key isn't set boots but is skipped at runtime —
+  # supervise health-checks /health and won't use one that still needs a key.
+  brain2:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    profiles: [pool]
+    depends_on:
+      - ollama
+    ports:
+      - "3301:3300"
+    env_file:
+      - path: server/.env
+        required: false
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - HOST=0.0.0.0
+      - TERMINUS_CORE=groq
+    restart: unless-stopped
+
+  brain3:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    profiles: [pool]
+    depends_on:
+      - ollama
+    ports:
+      - "3302:3300"
+    env_file:
+      - path: server/.env
+        required: false
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - HOST=0.0.0.0
+      - TERMINUS_CORE=gemini
+    restart: unless-stopped
+
+  brain4:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    profiles: [pool]
+    depends_on:
+      - ollama
+    ports:
+      - "3303:3300"
+    env_file:
+      - path: server/.env
+        required: false
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - HOST=0.0.0.0
+      - TERMINUS_CORE=mistral
+    restart: unless-stopped
+
+  brain5:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    profiles: [pool]
+    depends_on:
+      - ollama
+    ports:
+      - "3304:3300"
+    env_file:
+      - path: server/.env
+        required: false
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - HOST=0.0.0.0
+      - TERMINUS_CORE=sambanova
+    restart: unless-stopped
+
+  brain6:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    profiles: [pool]
+    depends_on:
+      - ollama
+    ports:
+      - "3305:3300"
+    env_file:
+      - path: server/.env
+        required: false
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - HOST=0.0.0.0
+      - TERMINUS_CORE=nvidia
+    restart: unless-stopped
+
   # Optional Kali toolbox she can drive via the allowlisted shell tool.
   # Off by default; bring it up with:  docker compose --profile tools up -d kali
   kali:
