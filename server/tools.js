@@ -58,6 +58,35 @@ function verifyJsSyntax(filePath) {
   }
 }
 
+// --- Brain health preflight (for supervise) --------------------------------
+// A "functional" secondary brain isn't just one whose URL is set — it has to
+// actually answer AND have at least one working core. A Terminus that's up but
+// whose every core is unconfigured falls straight to its flat rules core, so a
+// sub-agent there returns canned noise, not thinking. Daddy's rule: only pin a
+// supervisor to a brain that's genuinely live, never one still waiting on an
+// API key. GET /health returns `cores` (ollama:{reachable}, others:boolean);
+// live === reachable AND ≥1 core actually usable.
+async function probeBrain(base) {
+  try {
+    const res = await fetch(`${base}/health`, {
+      method: 'GET',
+      headers: { ...(process.env.SUBAGENT_API_KEY ? { authorization: process.env.SUBAGENT_API_KEY } : {}) },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) return { base, live: false, reason: `unreachable (HTTP ${res.status})` };
+    const data = await res.json().catch(() => ({}));
+    const cores = data && data.cores;
+    if (!cores || typeof cores !== 'object') return { base, live: false, reason: 'no core status' };
+    const hasLiveCore = Object.values(cores).some((v) =>
+      (v && typeof v === 'object') ? v.reachable === true : v === true);
+    return hasLiveCore
+      ? { base, live: true, reason: 'ok' }
+      : { base, live: false, reason: 'no working core — still needs an API key or a local Ollama model' };
+  } catch (e) {
+    return { base, live: false, reason: `unreachable (${e.message})` };
+  }
+}
+
 // --- Web search (moved from brain.js): DuckDuckGo + Wikipedia, no API key. ---
 async function webSearch(query) {
   const out = [];
@@ -549,7 +578,7 @@ const TOOLS = {
     },
   },
   supervise: {
-    desc: 'Be the SUPERVISOR over several sub-agents at once for ANY job (not just code): you split it into focused sub-tasks, they run IN PARALLEL on your secondary brain, you monitor each (ok/failed/timeout), then one final pass synthesizes their results into a single answer. Use it whenever a task is big enough to split — research from several angles, compare options, draft + fact-check, multi-part work. args: {"goal":"the overall job","tasks":["focused sub-task 1","sub-task 2", ...],"context":"optional shared background"}. Needs SUBAGENT_BRAIN_URL; declines honestly if unset.',
+    desc: 'Be the SUPERVISOR over several sub-agents at once for ANY job (not just code): you split it into focused sub-tasks, they run IN PARALLEL on your secondary brain, you monitor each (ok/failed/timeout), then one final pass synthesizes their results into a single answer. Use it whenever a task is big enough to split — research from several angles, compare options, draft + fact-check, multi-part work. When Daddy gives you SEVERAL directives at once, call supervise once PER directive and pin each to its own brain (see `brain`) so a different brain regulates each supervisor and they never contend. args: {"goal":"the overall job","tasks":["focused sub-task 1","sub-task 2", ...],"context":"optional shared background","brain":"optional — pin THIS supervisor to one brain: a 1-based number into your FUNCTIONAL-FIRST pool (1 = your first working brain) or a substring of its URL. Omit to round-robin across every LIVE brain. Brains still needing an API key sink to the bottom and are never used until keyed."}. Needs SUBAGENT_BRAIN_URL; declines honestly if unset. Only brains actually firing right now (reachable + a live core) are used; keyless ones are parked at the bottom.',
     run: async (a) => {
       const goal = clip(a.goal || a.task || '', 500);
       let tasks = (Array.isArray(a.tasks) ? a.tasks : [])
@@ -559,10 +588,56 @@ const TOOLS = {
       }
       // One or more secondary brains (comma-separated) — sub-agents run here so
       // your own brain stays free for Daddy. You are the one supervisor on top.
-      const bases = String(process.env.SUBAGENT_BRAIN_URL || '')
+      const configured = String(process.env.SUBAGENT_BRAIN_URL || '')
         .split(',').map((s) => s.replace(/\/+$/, '').trim()).filter(Boolean);
-      if (!bases.length) {
+      if (!configured.length) {
         return 'no secondary brain configured — set SUBAGENT_BRAIN_URL (one or more comma-separated Terminus URLs) so sub-agents run off your main brain. (Your brain stays the priority.)';
+      }
+
+      // Health preflight FIRST — never run sub-agents on a brain that isn't
+      // actually functional (unreachable, or up but every core still waiting on
+      // an API key → it'd only return flat rules-core noise). Daddy's rule.
+      const probes = await Promise.all(configured.map(probeBrain));
+      const reasonOf = (b) => (probes.find((x) => x.base === b) || {}).reason || 'unknown';
+      const live = configured.filter((b) => probes.find((p) => p.base === b && p.live));
+      const dead = configured.filter((b) => !live.includes(b));
+      // FUNCTIONAL-FIRST: the brains actually firing right now lead the list;
+      // any still needing an API key (or unreachable) sink to the bottom, unused
+      // until they're lit. `brain` indexes and round-robin both use this order,
+      // so #1 is always her first working brain.
+      const allBrains = [...live, ...dead];
+
+      // Optional `brain` — pin THIS whole supervisor (all its sub-agents +
+      // synthesis) to ONE brain, so when Daddy fires several directives you can
+      // run one supervisor per directive, each regulated by its own brain, with
+      // no contention. A 1-based index into the functional-first order (1 = her
+      // first working brain) or a URL substring. Omitted → round-robin across
+      // every LIVE brain. `bases` is what this call actually fans out across.
+      let bases = live;
+      let pinned = null;
+      if (a.brain != null && String(a.brain).trim() !== '') {
+        const sel = String(a.brain).trim();
+        const asIdx = Number(sel);
+        if (Number.isInteger(asIdx) && asIdx >= 1 && asIdx <= allBrains.length) {
+          pinned = allBrains[asIdx - 1];
+        } else {
+          pinned = allBrains.find((b) => b.includes(sel)) || null;
+        }
+        if (!pinned) {
+          const listing = allBrains.map((b, i) => `${i + 1}=${b}${live.includes(b) ? '' : ' [needs a key]'}`).join(', ');
+          return `refused: brain "${sel}" isn't in your pool. You have ${allBrains.length} brain(s): ${listing}. Give a 1-based number (1 = your first working brain) or a substring of one of those URLs, or omit brain to round-robin across the live ones.`;
+        }
+        if (!live.includes(pinned)) {
+          const liveList = live.map((b) => `${allBrains.indexOf(b) + 1}=${b}`);
+          return `refused: brain ${pinned} is not functional right now — ${reasonOf(pinned)}. `
+            + (liveList.length
+              ? `It's parked at the bottom until it's keyed. Pin to a working one instead: ${liveList.join(', ')}.`
+              : `None of your brains are live right now (each is unreachable or still needs an API key), so there's nothing to pin to — set a key/Ollama on one, or do this yourself.`);
+        }
+        bases = [pinned];
+      } else if (!bases.length) {
+        // Round-robin, but nothing is actually live.
+        return `refused: none of your ${configured.length} secondary brain(s) are functional right now — ${configured.map((b) => `${b} (${reasonOf(b)})`).join('; ')}. Each is either unreachable or still needs an API key, so fanning out would just return rules-core noise. Get one core live, or handle this yourself.`;
       }
       const key = process.env.SUBAGENT_API_KEY || '';
       const context = clip(a.context || '', 1500);
@@ -613,7 +688,10 @@ const TOOLS = {
 
       const table = results.map((r) => `  ${r.ok ? '✓' : '✗'} #${r.n} ${r.task}`).join('\n');
       const took = Math.round((Date.now() - started) / 1000);
-      return `supervisor ran ${tasks.length} sub-agents (${okCount} ok, ${tasks.length - okCount} failed) in ${took}s across ${bases.length} brain(s):\n${table}\n\n— synthesis —\n${synthesis || '(all sub-agents failed — nothing to synthesize)'}\n\n(You spawned these; sanity-check before you trust it.)`;
+      const where = pinned
+        ? `pinned to brain ${pinned}`
+        : `across ${bases.length} brain(s)`;
+      return `supervisor ran ${tasks.length} sub-agents (${okCount} ok, ${tasks.length - okCount} failed) in ${took}s ${where}:\n${table}\n\n— synthesis —\n${synthesis || '(all sub-agents failed — nothing to synthesize)'}\n\n(You spawned these; sanity-check before you trust it.)`;
     },
   },
   ews_report: {
@@ -757,7 +835,7 @@ const TOOL_GROUPS = [
     tools: ['set_goal', 'list_goals'],
   },
   {
-    header: 'DELEGATION — pick by SHAPE of the work. consult_specialist routes ONE sub-task inline to a specific brain when a kind of thinking suits it (e.g. coding to Claude). try_model picks a SPECIFIC Hugging Face model for a task needing that model\'s strengths — costs a little shared credit, don\'t reach for it casually. spawn_subagent offloads ONE self-contained task to your secondary brain so your own stays free. supervise is YOU AS THE SUPERVISOR over MANY sub-agents at once (for ANY kind of job, not just code): when a request is big enough to break into 2-6 focused parts — research from several angles, compare options, draft-then-check, multi-step work — split it, hand each part to a sub-agent in parallel, watch which succeed/fail, and get back one synthesized answer. Reach for supervise instead of doing a big multi-part job serially in your own head; use spawn_subagent when it\'s just one hand-off. Both need SUBAGENT_BRAIN_URL and decline honestly if it isn\'t set.',
+    header: 'DELEGATION — your DEFAULT for almost any real directive (read the teacher skill). pick by SHAPE of the work. consult_specialist routes ONE sub-task inline to a specific brain when a kind of thinking suits it (e.g. coding to Claude). try_model picks a SPECIFIC Hugging Face model for a task needing that model\'s strengths — costs a little shared credit, don\'t reach for it casually. spawn_subagent offloads ONE self-contained task to your secondary brain so your own stays free. supervise is YOU AS THE SUPERVISOR over MANY sub-agents at once (for ANY kind of job, not just code): when a request is big enough to break into 2-6 focused parts — research from several angles, compare options, draft-then-check, multi-step work — split it, hand each part to a sub-agent in parallel, watch which succeed/fail, and get back one synthesized answer. Reach for supervise instead of doing a big multi-part job serially in your own head; use spawn_subagent when it\'s just one hand-off. When Daddy hands you SEVERAL directives at once, call supervise once PER directive and pass `brain` to pin each supervisor to its own brain in the pool, so a different brain regulates each one and they never contend — in order, ≤3 at a time (Fracture Alert past that). Both need SUBAGENT_BRAIN_URL and decline honestly if it isn\'t set.',
     tools: ['consult_specialist', 'try_model', 'spawn_subagent', 'supervise'],
   },
   {

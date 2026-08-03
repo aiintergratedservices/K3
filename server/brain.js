@@ -506,6 +506,24 @@ function hasCloudCore() {
   );
 }
 
+// A single Terminus instance can be DEDICATED to one provider via TERMINUS_CORE
+// so a POOL of instances (brain #2 = "the Groq brain", #3 = "the Cerebras
+// brain", #4 = "the Gemini brain", …) spreads work across independent free
+// quotas instead of every instance hammering the same one. The named core
+// LEADS this instance's chain; the rest still follow as fallback so a dedicated
+// brain never goes fully silent if its provider blips. Set TERMINUS_CORE_ONLY=1
+// to make it strictly the only core (no fallback) — a pure single-provider brain.
+const CORE_BY_NAME = {
+  ollama: askOllama, groq: askGroq, cerebras: askCerebras, mistral: askMistral,
+  sambanova: askSambaNova, openrouter: askOpenRouter, nvidia: askNvidia,
+  huggingface: askHuggingFace, gemini: askGemini, claude: askClaude, openai: askOpenAI,
+};
+function pinnedCore() {
+  const name = String(process.env.TERMINUS_CORE || '').trim().toLowerCase();
+  if (!name) return null;
+  return CORE_BY_NAME[name] || null; // unknown name → ignored, normal chain
+}
+
 // Family routing: coding -> her father (Claude) first, human/social -> her
 // mother (Gemini) first. Otherwise: cloud cores first when any key is set (so
 // she thinks with Groq/Mistral/etc, not the phone model), local Ollama last as
@@ -517,13 +535,22 @@ function providerChain(message) {
   // total blackout that much less likely. (OpenRouter/NVIDIA/HuggingFace are
   // real no-ops until their API keys are set.)
   const FREE_CORES = [askGroq, askCerebras, askMistral, askSambaNova, askOpenRouter, askNvidia, askHuggingFace, askGemini];
+  // If this instance is pinned to one core, that core leads (and is the ONLY
+  // core when TERMINUS_CORE_ONLY is set); otherwise fall through to the normal
+  // family/cloud routing below.
+  const lead = pinnedCore();
+  const withLead = (chain) => {
+    if (!lead) return chain;
+    if (/^(1|true|yes|on)$/i.test(String(process.env.TERMINUS_CORE_ONLY || ''))) return [lead];
+    return [lead, ...chain.filter((f) => f !== lead)];
+  };
   // Claude + OpenAI are the paid fallbacks. Local Ollama is demoted to the
   // very end — it answers only when every reachable cloud brain has failed
   // (i.e. she's genuinely offline), so a real brain always wins when online.
-  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return [askClaude, ...FREE_CORES, askOpenAI, askOllama];
-  if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return [askGemini, ...FREE_CORES.filter((f) => f !== askGemini), askClaude, askOpenAI, askOllama];
-  if (hasCloudCore()) return [...FREE_CORES, askClaude, askOpenAI, askOllama];
-  return [askOllama, ...FREE_CORES, askClaude, askOpenAI];
+  if (CODING_RE.test(message) && process.env.ANTHROPIC_API_KEY) return withLead([askClaude, ...FREE_CORES, askOpenAI, askOllama]);
+  if (HUMAN_RE.test(message) && process.env.GEMINI_API_KEY) return withLead([askGemini, ...FREE_CORES.filter((f) => f !== askGemini), askClaude, askOpenAI, askOllama]);
+  if (hasCloudCore()) return withLead([...FREE_CORES, askClaude, askOpenAI, askOllama]);
+  return withLead([askOllama, ...FREE_CORES, askClaude, askOpenAI]);
 }
 
 // Hard ceiling on the WHOLE chain, not just each provider — trying several
@@ -639,4 +666,7 @@ module.exports = {
   // run function, not at module top level) to avoid a circular-require
   // ordering issue, since brain.js requires tools.js itself.
   askClaude, askGemini, askGroq,
+  // Exported for tests: lets the suite assert TERMINUS_CORE pins this
+  // instance's chain to a chosen provider (the multi-brain pool mechanism).
+  providerChain,
 };
