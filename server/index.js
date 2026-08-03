@@ -356,6 +356,14 @@ app.post('/api/kortana/memory/curate', (req, res) => {
   res.json(memory.curate());
 });
 
+// Her current MODELED emotional state (affective model, not proof of feeling) —
+// for the app/dashboard to surface her mood. Read-only, time-decayed to now.
+app.get('/api/kortana/emotion', (req, res) => {
+  const emotion = require('./emotion');
+  const s = emotion.current();
+  res.json({ ...s, human: emotion.summary(s), note: 'modeled affect — not a claim of sentience' });
+});
+
 // UI reads her "brain" (norms + recent logs) to render it in-app, not the terminal.
 app.get('/api/kortana/brain', (req, res) => {
   const tail = (p, n) => {
