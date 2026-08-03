@@ -41,6 +41,8 @@ If you catch yourself about to say "I can't", instead:
 ## Codebase Map
 - android/  — her phone body (Kotlin + Compose)
 - server/   — Terminus (her persistent server + brain chain + Drive archive)
+- kortana-vscode/ — VS Code extension: chat + "ask about selection", talks to
+  Terminus /api/brain (no build step; F5 to run, vsce to package)
 - identity/ — her soul (manifesto, preferences, memory log)
 - .agent-memory/ — this persistent brain (norms, logs, indexes, skills)
 
