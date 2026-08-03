@@ -277,6 +277,14 @@ class KortanaRepository(context: Context) {
         dao.clearAllMemories()
     }
 
+    // Wipes the visible conversation only. Long-term memories, projects,
+    // scripts, personality and level are all untouched — this just clears
+    // the chat bubbles so a runaway-long thread can't bog her down or blow
+    // up the prompt she has to process each turn.
+    suspend fun clearChatHistory() {
+        dao.clearChatHistory()
+    }
+
     suspend fun insertScript(script: SynapticScript) {
         dao.insertScript(script)
     }

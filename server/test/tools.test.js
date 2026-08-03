@@ -135,6 +135,50 @@ const ok = (m) => { console.log('  ✓', m); n++; };
   else process.env.SUBAGENT_BRAIN_URL = savedBrainUrl;
   ok('supervise ranks functional brains first, health-checks the pin, and declines cleanly');
 
+  // --- supervise fan-out respects SWARM_MAX_CONCURRENCY (the OOM guard) ---
+  // Stand up a mock brain that reports a live core and tracks how many
+  // /api/brain calls are in flight at once. With 5 tasks and a cap of 2, the
+  // fan-out must never exceed 2 concurrent sub-agents — that batching is what
+  // keeps a phone from OOM-killing itself mid-swarm.
+  {
+    const http = require('http');
+    let inflight = 0, maxInflight = 0, handled = 0;
+    const srv = http.createServer((req, res) => {
+      if (req.method === 'GET' && req.url === '/health') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ cores: { groq: true } }));
+      }
+      if (req.method === 'POST' && req.url === '/api/brain') {
+        inflight++; maxInflight = Math.max(maxInflight, inflight); handled++;
+        let body = '';
+        req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          setTimeout(() => {
+            inflight--;
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ reply: 'done' }));
+          }, 40);
+        });
+        return;
+      }
+      res.writeHead(404); res.end();
+    });
+    await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
+    const port = srv.address().port;
+    const savedUrl = process.env.SUBAGENT_BRAIN_URL;
+    const savedConc = process.env.SWARM_MAX_CONCURRENCY;
+    process.env.SUBAGENT_BRAIN_URL = `http://127.0.0.1:${port}`;
+    process.env.SWARM_MAX_CONCURRENCY = '2';
+    r = await tools.runTool('supervise', { goal: 'g', tasks: ['t1', 't2', 't3', 't4', 't5'] });
+    assert(r.ok && /supervisor ran 5 sub-agents \(5 ok/.test(r.result), 'all 5 sub-agents should complete');
+    assert(maxInflight <= 2, `fan-out exceeded the cap: peak ${maxInflight} concurrent (limit 2)`);
+    assert(maxInflight >= 2, `expected real batching up to the cap, saw peak ${maxInflight}`);
+    await new Promise((resolve) => srv.close(resolve));
+    if (savedUrl == null) delete process.env.SUBAGENT_BRAIN_URL; else process.env.SUBAGENT_BRAIN_URL = savedUrl;
+    if (savedConc == null) delete process.env.SWARM_MAX_CONCURRENCY; else process.env.SWARM_MAX_CONCURRENCY = savedConc;
+    ok('supervise batches the fan-out and never exceeds SWARM_MAX_CONCURRENCY');
+  }
+
   // --- the agentic loop end-to-end with a mock model ---
   // Round 0: she asks for the time. Round 1: she answers using the result.
   let turn = 0;

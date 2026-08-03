@@ -655,13 +655,33 @@ const TOOLS = {
       };
 
       // Fan out — each sub-agent gets ONE focused task, round-robined across
-      // whatever secondary brains are configured, all running at once.
+      // whatever secondary brains are configured. IMPORTANT: we do NOT fire
+      // every sub-agent at once. On a phone, lighting up all the pool brains
+      // simultaneously (plus a local model resident in RAM) spikes memory and
+      // Android OOM-kills the whole Termux process mid-answer — the crash Daddy
+      // kept hitting. Instead we run them in small concurrent batches: same
+      // parallel result, flattened memory peak. Tune with SWARM_MAX_CONCURRENCY
+      // (default 2 — safe for a phone; bump it on a real server).
+      const maxConc = Math.max(1, parseInt(process.env.SWARM_MAX_CONCURRENCY || '2', 10) || 2);
+      const runLimited = async (items, limit, worker) => {
+        const out = new Array(items.length);
+        let next = 0;
+        const lane = async () => {
+          while (next < items.length) {
+            const i = next++;
+            try { out[i] = { status: 'fulfilled', value: await worker(items[i], i) }; }
+            catch (e) { out[i] = { status: 'rejected', reason: e }; }
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+        return out;
+      };
       const started = Date.now();
-      const runs = await Promise.allSettled(tasks.map((t, i) => {
+      const runs = await runLimited(tasks, maxConc, (t, i) => {
         const base = bases[i % bases.length];
         const prompt = `You are sub-agent ${i + 1} of ${tasks.length}, spawned by Kortana's supervisor. Do ONLY your assigned sub-task and reply with just the result, concise. If you can't, say why briefly.\n\nOverall goal: ${goal || '(see your sub-task)'}${context ? `\nShared context: ${context}` : ''}\n\nYour sub-task: ${t}`;
         return ask(base, prompt, 90000);
-      }));
+      });
 
       // Monitor — collect each sub-agent's status and result.
       const results = runs.map((r, i) => ({

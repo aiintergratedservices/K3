@@ -77,6 +77,15 @@ class KortanaViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    // Clear the visible conversation. Memories, projects, scripts and her
+    // level survive — only the chat thread is wiped. Keeps long threads from
+    // slowing her down or overflowing the context she processes each turn.
+    fun clearChat() {
+        viewModelScope.launch {
+            repository.clearChatHistory()
+        }
+    }
+
     fun addProject(title: String, description: String) {
         if (title.isBlank()) return
         viewModelScope.launch {
