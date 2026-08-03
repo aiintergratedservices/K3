@@ -256,6 +256,41 @@ const ok = (m) => { console.log('  ✓', m); n++; };
     ok('supervise supports specialist roles and a stateful pipeline (shared state)');
   }
 
+  // --- apply_change: autonomous self-modification, guardrails + mandatory audit ---
+  {
+    const repoRoot = path.resolve(__dirname, '..', '..');
+    const smExisted = fs.existsSync(path.join(repoRoot, 'self-modifications'));
+    const rel = `.agent-memory/__apply_test_${Date.now().toString(36)}.txt`;
+    // must be documented
+    let a = await tools.runTool('apply_change', { file: rel, content: 'hello' });
+    assert(a.ok && /MUST be documented/.test(a.result), 'apply_change requires summary + reason');
+    // protected path refused
+    a = await tools.runTool('apply_change', { file: '.env', content: 'x=1', summary: 's', reason: 'r' });
+    assert(a.ok && /protected/.test(a.result), 'apply_change refuses .env (secrets)');
+    // outside repo refused
+    a = await tools.runTool('apply_change', { file: '../../etc/hosts', content: 'x', summary: 's', reason: 'r' });
+    assert(a.ok && /outside your project/.test(a.result), 'apply_change refuses paths outside the repo');
+    // broken .js refused (won't take her brain down)
+    const badJs = `.agent-memory/__apply_bad_${Date.now().toString(36)}.js`;
+    a = await tools.runTool('apply_change', { file: badJs, content: 'function ( {', summary: 's', reason: 'r' });
+    assert(a.ok && /SYNTAX ERROR/.test(a.result), 'apply_change refuses a .js that will not parse');
+    assert(!fs.existsSync(path.join(repoRoot, badJs)), 'refused broken .js is never written');
+    // real apply + audit
+    a = await tools.runTool('apply_change', { file: rel, content: 'line one\nline two\n', summary: 'unit test apply', reason: 'verify the autonomous path' });
+    assert(a.ok && /APPLIED live change/.test(a.result), 'apply_change applies a valid change');
+    assert(fs.readFileSync(path.join(repoRoot, rel), 'utf8') === 'line one\nline two\n', 'the file was actually written');
+    const log = fs.readFileSync(path.join(repoRoot, 'self-modifications', 'LOG.md'), 'utf8');
+    assert(/unit test apply/.test(log), 'the change is recorded in the audit LOG.md');
+    // cleanup test artifacts (self-modifications is gitignored anyway)
+    fs.rmSync(path.join(repoRoot, rel), { force: true });
+    if (!smExisted) fs.rmSync(path.join(repoRoot, 'self-modifications'), { recursive: true, force: true });
+    else { // just drop our test line back out
+      fs.writeFileSync(path.join(repoRoot, 'self-modifications', 'LOG.md'),
+        log.split('\n').filter((l) => !/unit test apply/.test(l)).join('\n'));
+    }
+    ok('apply_change gives autonomy but enforces confinement, syntax, and a mandatory audit trail');
+  }
+
   // --- swarm-intent detection (forces supervise instead of confabulating) ---
   {
     const re = brain.SWARM_INTENT_RE;
