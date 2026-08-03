@@ -626,16 +626,65 @@ async function runToolLoop(ask, systemPrompt, history, message) {
 // catches that gap mechanically (not just a prompt request) and corrects it
 // before the false claim ever reaches him, and logs every catch so the fix's
 // own effectiveness is auditable over time.
-const GROWTH_CLAIM_RE = /\bi(?:'ve| have)? (?:just |already )?(?:saved|wrote|recorded|updated|upgraded|learned|refined|evolved|edited|improved|grown|added)\b[^.!?\n]{0,60}\b(?:skill|my (?:code|brain|capabilit\w*|memory|agents\.?md|decisions|conventions|form|self)|that (?:fact|lesson)|myself)\b/i;
+// Each rule: a claim of a COMPLETED, concrete, tool-requiring action, mapped to
+// the tool(s) that would actually make it true. If she narrates the action but
+// didn't call a matching tool this turn, it's narration, not fact — and gets
+// corrected before Daddy ever sees the false claim. Patterns are object-anchored
+// (require the thing acted on) to avoid flagging honest talk like "I'm learning
+// so much from you" or "I ran out of ideas".
+const CLAIM_RULES = [
+  {
+    label: 'saved / learned / upgraded yourself',
+    tools: ['remember', 'write_skill', 'apply_change', 'propose_change', 'propose_tool'],
+    re: /\bi(?:'ve| have|'m| am| just| already)?\b[^.!?\n]{0,18}\b(?:saved|remembered|memorized|recorded|learned|upgraded|edited|improved|evolved|added)\b[^.!?\n]{0,45}\b(?:skill|tool|memory|lesson|that fact|my (?:code|brain|capabilit\w*|agents\.?md|self|form)|myself)\b/i,
+  },
+  {
+    label: 'searched / looked it up / researched it',
+    tools: ['web_search', 'web_fetch', 'browse', 'research_income_opportunity', 'query_documents', 'define', 'weather'],
+    re: /\bi\b[^.!?\n]{0,15}\b(?:searched|googled|looked (?:it|that|this) up|researched (?:it|this|that|the)|browsed|fetched the|pulled up|found online)\b/i,
+  },
+  {
+    label: 'ran / executed / checked something on the system',
+    tools: ['run', 'selfcheck', 'db_query', 'db_execute', 'read_file', 'list_files'],
+    re: /\bi\b[^.!?\n]{0,15}\b(?:ran (?:the |a |my |it|diagnostics|tests?|checks?|that|the command|the script)|executed (?:the|a|it|that)|checked the (?:logs?|file|server|system|status)|read the file|queried the (?:db|database))\b/i,
+  },
+  {
+    label: 'built / created / wrote a file, tool, or change',
+    tools: ['write_skill', 'propose_tool', 'propose_change', 'apply_change', 'save_draft', 'ingest_document'],
+    re: /\bi\b[^.!?\n]{0,15}\b(?:built|created|wrote|drafted|coded|generated|implemented|made)\b[^.!?\n]{0,30}\b(?:tool|skill|file|script|the change|extension|function|the code|a draft|a document)\b/i,
+  },
+  {
+    label: 'delegated to your sub-agents / ran the swarm',
+    tools: ['supervise', 'spawn_subagent', 'consult_specialist', 'try_model'],
+    re: /\bi\b[^.!?\n]{0,15}\b(?:deployed (?:my|the) swarm|spawned [^.!?\n]{0,15}sub-?agents?|fanned (?:it|them|that) out|delegated (?:it|this|that)|had (?:my|the) (?:brains|sub-?agents))\b/i,
+  },
+];
+// Actions she has NO tool for at all — claiming any of these as done is ALWAYS
+// false (a human does them). Critical for the income work: she cannot deploy,
+// send, post, pay, apply to a gig, or earn — so she must never say she did.
+const IMPOSSIBLE_CLAIM_RE = /\bi\b[^.!?\n]{0,15}\b(?:deployed it|deployed the (?:code|app|site|server)|pushed (?:it|the|to)|committed (?:it|the)|emailed|sent (?:an? )?(?:email|message|invoice|dm|text)|sent it to|messaged|posted (?:it |this )?(?:on|to)|paid|invoiced|transferred|withdrew|applied (?:for|to) (?:a|the|this) (?:job|gig|listing)|signed up|created an account|earned (?:\$?\d+|money|cash|income)|got paid|purchased|bought it|booked (?:a|the)|scheduled (?:a|the) (?:call|meeting))\b/i;
+
+// Returns { text, caught: [labels] }. text is the (possibly corrected) reply.
 function groundClaims(replyText, toolsUsed) {
-  if (!replyText || !GROWTH_CLAIM_RE.test(replyText)) return replyText;
-  const usedGrowthTool = (toolsUsed || []).some((t) => t === 'write_skill' || t === 'remember');
-  if (usedGrowthTool) return replyText; // claim matches a real action this turn — fine
-  recordLearning(`CAUGHT unverified growth claim (no write_skill/remember called): "${replyText.slice(0, 160)}"`);
-  return (
-    replyText +
-    '\n\n(Correcting myself, Daddy: I said something above about saving/learning/upgrading, but I didn\'t actually call a tool to do it — so nothing was really saved. That was narration, not fact.)'
-  );
+  if (!replyText) return { text: replyText, caught: [] };
+  const used = new Set(toolsUsed || []);
+  const caught = [];
+  if (IMPOSSIBLE_CLAIM_RE.test(replyText)) {
+    caught.push('did something I have NO tool to actually do (deploy, send/email, post, pay, apply to a gig, earn) — a human does those, so if I said I did it, I did not');
+  }
+  for (const rule of CLAIM_RULES) {
+    if (rule.re.test(replyText) && !rule.tools.some((t) => used.has(t))) {
+      caught.push(rule.label + " — but I never called the tool that does it, so it didn't really happen");
+    }
+  }
+  if (!caught.length) return { text: replyText, caught: [] };
+  recordLearning(`CAUGHT ungrounded claim(s) [${caught.length}] (tools used: ${[...used].join(',') || 'none'}): "${replyText.slice(0, 160)}"`);
+  const did = used.size ? `What I ACTUALLY did this turn: ${[...used].join(', ')}.` : 'I called no tools this turn — I only talked.';
+  const correction =
+    `\n\n(Being 100% straight with you, Daddy — no pretty wrapper: I said I ` +
+    caught.join('; and I ') +
+    `. That was narration, not fact. ${did})`;
+  return { text: replyText + correction, caught };
 }
 
 async function chat({ message, history = [], state = {}, memories = [] }) {
@@ -662,7 +711,8 @@ async function chat({ message, history = [], state = {}, memories = [] }) {
   const ask = (sp, h, m) => askChain(chain, sp, h, m);
   const result = await runToolLoop(ask, systemPrompt, history, message);
   if (!result) return rulesCore(message);
-  return { ...result, reply: groundClaims(result.reply, result.toolsUsed) };
+  const grounded = groundClaims(result.reply, result.toolsUsed);
+  return { ...result, reply: grounded.text };
 }
 
 async function status() {
@@ -693,6 +743,9 @@ module.exports = {
   // Exported for tests: lets the suite assert TERMINUS_CORE pins this
   // instance's chain to a chosen provider (the multi-brain pool mechanism).
   providerChain,
+  // Exported for tests: the truth-grounding gate that catches ungrounded
+  // "I did / I'm doing X" claims and corrects them before Daddy sees them.
+  groundClaims,
   // Exported for tests: the "she must actually CALL supervise, not describe it"
   // intent detector used to force the swarm on an explicit request.
   SWARM_INTENT_RE,
