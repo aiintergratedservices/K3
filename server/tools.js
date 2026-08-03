@@ -141,6 +141,47 @@ async function webFetch(url) {
   } catch (e) { return `fetch error: ${e.message}`; }
 }
 
+// --- Navigable page read (backs the `browse` tool) ----------------------------
+// Like webFetch, but also pulls out the page's LINKS (absolute, deduped, http(s)
+// only) so she can navigate across turns, and follows redirects. Honest limit:
+// this reads server-rendered HTML, it does NOT execute the page's JavaScript —
+// a real headless browser is a heavier, separate thing. Returns a structured
+// object; the tool formats it for her.
+async function browsePage(url) {
+  if (!/^https?:\/\//i.test(String(url || ''))) return { error: 'only http(s) URLs are allowed' };
+  let res;
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(10000), headers: { 'User-Agent': 'Kortana/1.0 (+web-read)' }, redirect: 'follow' });
+  } catch (e) { return { error: `fetch error: ${e.message}` }; }
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  const finalUrl = res.url || url;
+  const html = await res.text();
+  if (!/html/i.test(res.headers.get('content-type') || '')) {
+    return { finalUrl, title: '', text: clip(html, 2500), links: [] };
+  }
+  const titleM = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = titleM ? clip(titleM[1], 200) : '';
+  const links = [];
+  const seen = new Set();
+  const linkRe = /<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = linkRe.exec(html)) && links.length < 30) {
+    const anchor = clip(m[2].replace(/<[^>]+>/g, ' '), 80);
+    if (!anchor) continue;
+    let abs;
+    try { abs = new URL(m[1].trim(), finalUrl).toString(); } catch (e) { continue; }
+    if (!/^https?:\/\//i.test(abs) || seen.has(abs)) continue;
+    seen.add(abs);
+    links.push({ text: anchor, url: abs });
+  }
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&(?:nbsp|amp|lt|gt|quot|#39|#x27);/gi, ' ');
+  return { finalUrl, title, text: clip(text, 2500), links };
+}
+
 // --- Sub-agent ROLES (CrewAI/AutoGen-style specialization) --------------------
 // A supervisor sub-task can be handed to a specialist instead of a generalist.
 // The role only reshapes the sub-agent's framing/instructions — it does NOT pin
@@ -168,6 +209,38 @@ const TOOLS = {
   web_fetch: {
     desc: 'Read the text of a web page. args: {"url":"https://..."}',
     run: async (a) => webFetch(a.url || ''),
+  },
+  browse: {
+    desc: 'Browse a web page like a reader: get its main text AND a numbered list of links you can follow, so you can navigate a site across turns instead of a single blind fetch. To go deeper, call browse again with a link\'s URL — or pass "link" (a number from the list, or text to match) to follow one in the SAME call. Honest limit: reads server-rendered HTML, does NOT run the page\'s JavaScript (no headless browser), so heavily-scripted apps may look thin — use web_search first to find good URLs. args: {"url":"https://...","link":"optional: a link number, or text/url substring, to follow now"}',
+    run: async (a) => {
+      const first = await browsePage(a.url || '');
+      if (first.error) return `browse failed: ${first.error}`;
+      let followed = null, note = '';
+      const sel = a.link != null ? String(a.link).trim() : '';
+      if (sel && first.links.length) {
+        const idx = Number(sel);
+        const target = (Number.isInteger(idx) && idx >= 1 && idx <= first.links.length)
+          ? first.links[idx - 1]
+          : first.links.find((l) => l.text.toLowerCase().includes(sel.toLowerCase()) || l.url.toLowerCase().includes(sel.toLowerCase()));
+        if (!target) note = `no link matched "${sel}" on that page`;
+        else {
+          const r = await browsePage(target.url);
+          if (r.error) note = `couldn't follow "${target.text}" (${target.url}): ${r.error}`;
+          else followed = { ...r, from: target };
+        }
+      } else if (sel) note = 'that page had no followable links';
+      const page = followed || first;
+      const linkList = page.links.slice(0, 15).map((l, i) => `  [${i + 1}] ${l.text} -> ${l.url}`).join('\n');
+      return [
+        followed ? `Followed -> ${followed.from.text} (${page.finalUrl})` : `Page: ${page.finalUrl}`,
+        page.title ? `Title: ${page.title}` : '',
+        note ? `(note: ${note})` : '',
+        '',
+        page.text || '(no readable text)',
+        '',
+        page.links.length ? `Links (call browse again with a url, or "link":<number>):\n${linkList}` : '(no links found)',
+      ].filter((x) => x !== '').join('\n');
+    },
   },
   remember: {
     desc: 'Save a fact to your memory for later. args: {"fact":"...","category":"USER|KNOWLEDGE"}',
@@ -888,8 +961,8 @@ const TOOLS = {
 // tool can never silently go undocumented just because this list drifted.
 const TOOL_GROUPS = [
   {
-    header: 'LOOKUP & FACTS — web_search for anything fresh/current you don\'t already know. web_fetch only when you have a specific URL to read in full. If documents are ingested on this topic, query_documents FIRST — a grounded answer beats a guessed one. define/weather/now/time_until are narrow exact-purpose lookups — prefer them over web_search when they fit exactly (don\'t web_search "what time is it").',
-    tools: ['web_search', 'web_fetch', 'query_documents', 'list_documents', 'ingest_document', 'define', 'weather', 'now', 'time_until'],
+    header: 'LOOKUP & FACTS — web_search for anything fresh/current you don\'t already know. web_fetch reads ONE URL in full. browse is web_fetch that also hands you the page\'s LINKS so you can navigate a site across turns (follow one with browse "link":<n>) — use it when one page isn\'t enough and you need to dig. If documents are ingested on this topic, query_documents FIRST — a grounded answer beats a guessed one. define/weather/now/time_until are narrow exact-purpose lookups — prefer them over web_search when they fit exactly (don\'t web_search "what time is it").',
+    tools: ['web_search', 'web_fetch', 'browse', 'query_documents', 'list_documents', 'ingest_document', 'define', 'weather', 'now', 'time_until'],
   },
   {
     header: 'YOUR MEMORY — recall BEFORE assuming you don\'t know something; check your own memory first, it\'s free. remember is for ONE durable fact worth having in every future prompt — not a scratch note, not something already in a document (that\'s ingest_document) or a database (that\'s db_execute). list_flagged_claims audits times you SAID you saved/learned something without actually calling a tool.',

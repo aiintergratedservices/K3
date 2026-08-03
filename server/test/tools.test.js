@@ -67,6 +67,32 @@ const ok = (m) => { console.log('  ✓', m); n++; };
   assert(r.ok && /refused/.test(r.result));
   ok('web_fetch refuses non-http(s) URLs');
 
+  // --- browse: reads text, lists links, and can follow one ---
+  r = await tools.runTool('browse', { url: 'file:///etc/passwd' });
+  assert(r.ok && /refused|only http/i.test(r.result), 'browse refuses non-http(s)');
+  {
+    const http = require('http');
+    const srv = http.createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      if (req.url === '/') {
+        res.end('<html><head><title>Home Page</title></head><body><h1>Welcome</h1><p>hello world body text</p><a href="/about">About Us</a> <a href="https://ext.example/x">External</a></body></html>');
+      } else if (req.url === '/about') {
+        res.end('<html><head><title>About</title></head><body>the about page content here</body></html>');
+      } else { res.writeHead(404); res.end(); }
+    });
+    await new Promise((rr) => srv.listen(0, '127.0.0.1', rr));
+    const base = `http://127.0.0.1:${srv.address().port}`;
+    r = await tools.runTool('browse', { url: base + '/' });
+    assert(r.ok && /hello world body text/.test(r.result), 'browse returns page text');
+    assert(/Title: Home Page/.test(r.result), 'browse returns the title');
+    assert(/About Us ->/.test(r.result) && /\[1\]/.test(r.result), 'browse lists followable links');
+    // follow a link by its number
+    r = await tools.runTool('browse', { url: base + '/', link: '1' });
+    assert(r.ok && /Followed ->/.test(r.result) && /the about page content here/.test(r.result), 'browse follows a link by number');
+    await new Promise((rr) => srv.close(rr));
+    ok('browse reads text, lists links, and follows one');
+  }
+
   // --- calc: exact math + rejects non-math ---
   r = await tools.runTool('calc', { expr: '(3+4)*2' });
   assert(r.ok && r.result === '14');

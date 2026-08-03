@@ -1,0 +1,56 @@
+{
+  "name": "kortana-vscode",
+  "displayName": "Kortana",
+  "description": "Talk to Kortana — your self-hosted Terminus brain — from inside VS Code. Ask about a selection, or open a chat panel. No cloud account; it talks to your own Terminus server.",
+  "version": "0.1.0",
+  "publisher": "aiintergratedservices",
+  "license": "SEE LICENSE IN ../LICENSE",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "kortana.openChat",
+        "title": "Kortana: Open Chat"
+      },
+      {
+        "command": "kortana.ask",
+        "title": "Kortana: Ask a Question"
+      },
+      {
+        "command": "kortana.askSelection",
+        "title": "Kortana: Ask About Selection"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "kortana.askSelection",
+          "when": "editorHasSelection",
+          "group": "z_kortana"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Kortana",
+      "properties": {
+        "kortana.terminusUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:3300",
+          "description": "Base URL of Kortana's Terminus brain server (the same server the phone app talks to)."
+        },
+        "kortana.apiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional key sent as both `x-api-key` and `authorization` to Terminus. Leave blank if your server is open on localhost."
+        }
+      }
+    }
+  }
+}
