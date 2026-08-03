@@ -49,9 +49,9 @@ const POOL = [
   { name: 'kortana-brain-3', port: 3302, core: 'gemini' },
   { name: 'kortana-brain-4', port: 3303, core: 'mistral' },
   { name: 'kortana-brain-5', port: 3304, core: 'sambanova' },
-  { name: 'kortana-brain-6', port: 3305, core: 'nvidia' },
+  { name: 'kortana-brain-6', port: 3305, core: 'openrouter' },
   // Add a seventh the same way as you light up more free keys, e.g.:
-  // { name: 'kortana-brain-7', port: 3306, core: 'openrouter' },
+  // { name: 'kortana-brain-7', port: 3306, core: 'nvidia' },
 ];
 
 module.exports = {

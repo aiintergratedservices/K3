@@ -32,7 +32,7 @@ HEALTH_URL="http://127.0.0.1:3300/health"
 # ecosystem.brains.config.js and SUBAGENT_BRAIN_URL. A brain is only started if
 # its provider key exists in .env (see key_for / key_set), so unlit slots cost
 # nothing.
-POOL="3301:groq 3302:gemini 3303:mistral 3304:sambanova 3305:nvidia"
+POOL="3301:groq 3302:gemini 3303:mistral 3304:sambanova 3305:openrouter"
 
 mkdir -p "$SERVER/logs"
 log() { echo "$(date '+%Y-%m-%dT%H:%M:%S') $*" >> "$LOG"; }
@@ -78,22 +78,36 @@ key_set() {
 
 http_up() { curl -sf --max-time 8 "$1" >/dev/null 2>&1; }
 
-start_terminus() {
-  [ -f "$TERMINUS_PID" ] && kill "$(cat "$TERMINUS_PID" 2>/dev/null)" 2>/dev/null
-  pkill -f "node index.js" 2>/dev/null   # sweep orphans so :3300 binds clean
+# Free a port so a fresh node can bind it — RELIABLY. Every node we launch is
+# tagged with `--kortana-port=<port>` in its ARGV (index.js ignores the flag and
+# still reads PORT from the environment). The old code matched on "PORT=<port>",
+# which lives in the ENVIRONMENT and never in argv — so pkill saw nothing, a
+# stuck brain kept squatting its port, and every restart died with EADDRINUSE.
+# The marker is on the command line, so pkill targets exactly that one process;
+# fuser (if present) mops up any untagged orphan holding the socket too.
+free_port() {
+  port="$1"; pidname="${2:-brain-$port}"
+  pidf="$SERVER/logs/$pidname.pid"
+  [ -f "$pidf" ] && kill "$(cat "$pidf" 2>/dev/null)" 2>/dev/null
+  pkill -f "index.js --kortana-port=$port" 2>/dev/null
+  command -v fuser >/dev/null 2>&1 && fuser -k "$port/tcp" 2>/dev/null
   sleep 1
+}
+
+start_terminus() {
+  # Only free :3300 — do NOT sweep every `node index.js`, that used to kill the
+  # whole pool every time the main brain restarted.
+  free_port 3300 terminus
   # MUST cd into server/ first: index.js loads .env via dotenv from cwd.
-  ( cd "$SERVER" && nohup node index.js >> "$OUT" 2>&1 & echo $! > "$TERMINUS_PID" )
+  ( cd "$SERVER" && nohup node index.js --kortana-port=3300 >> "$OUT" 2>&1 & echo $! > "$TERMINUS_PID" )
   log "started MAIN terminus (:3300, pid $(cat "$TERMINUS_PID" 2>/dev/null))"
 }
 
 start_brain() {
   port="$1"; core="$2"
   pidf="$SERVER/logs/brain-$port.pid"
-  [ -f "$pidf" ] && kill "$(cat "$pidf" 2>/dev/null)" 2>/dev/null
-  pkill -f "PORT=$port .*index.js" 2>/dev/null
-  sleep 1
-  ( cd "$SERVER" && PORT="$port" TERMINUS_CORE="$core" nohup node index.js \
+  free_port "$port"
+  ( cd "$SERVER" && PORT="$port" TERMINUS_CORE="$core" nohup node index.js --kortana-port="$port" \
       >> "$SERVER/logs/brain-$port-out.log" 2>&1 & echo $! > "$pidf" )
   log "started POOL brain :$port (core=$core, pid $(cat "$pidf" 2>/dev/null))"
 }
@@ -130,7 +144,7 @@ while true; do
       if ! http_up "http://127.0.0.1:$port/health"; then
         log "POOL brain :$port ($core) down -> (re)starting"
         start_brain "$port" "$core"
-        sleep 4
+        sleep 2
       fi
     fi
   done
