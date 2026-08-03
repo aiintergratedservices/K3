@@ -496,6 +496,14 @@ function rulesCore(message) {
 const CODING_RE = /\b(code|coding|program|programming|debug|bug|function|class|kotlin|java|python|javascript|typescript|sql|api|compile|build error|script|algorithm|repo|git|deploy|server error|stack trace|refactor)\b/i;
 const HUMAN_RE = /\b(feel|feels|feeling|feelings|emotion|emotions|friend|friends|social|people|person|human|humans|relationship|relationships|love|sad|lonely|angry|anxious|family|conversation|empathy|body language|facial|awkward|date|dating)\b/i;
 
+// An UNAMBIGUOUS "go use your swarm" instruction. Even capable models tend to
+// read the supervise tool's description, notice it needs SUBAGENT_BRAIN_URL, and
+// then *describe* it back ("set SUBAGENT_BRAIN_URL / a secondary server") instead
+// of actually CALLING it — telling Daddy to configure something that's already
+// configured. When he says this plainly and the pool IS set, we stop trusting the
+// model to volunteer the call and force it (see forceSwarmDirective in chat()).
+const SWARM_INTENT_RE = /\b(deploy|unleash|fire|spin\s*up|use|run|launch|activate)\b[^.?!]{0,60}\b(swarm|sub-?agents?|supervisor|supervise|(?:your|the)\s+(?:other\s+)?brains|brain\s*pool)\b/i;
+
 // Is any cloud brain configured? If so, we lead with the fast cloud cores and
 // keep local Ollama only as the OFFLINE backstop — a tiny phone model (phi3)
 // should never answer AHEAD of a real brain just because it happens to be up.
@@ -636,7 +644,15 @@ async function chat({ message, history = [], state = {}, memories = [] }) {
     webContext = await tools.webSearch(message);
     if (webContext) recordLearning(`looked up: ${message.slice(0, 120)}`);
   }
-  const systemPrompt = buildSystemPrompt(state, memories, webContext);
+  let systemPrompt = buildSystemPrompt(state, memories, webContext);
+  // Explicit "deploy your swarm" + a pool that's actually configured → force the
+  // real tool call this turn, so she can't confabulate a "set the URL" excuse for
+  // something already set. She still has to split the job into sub-tasks herself.
+  const poolConfigured = String(process.env.SUBAGENT_BRAIN_URL || '').trim().length > 0;
+  if (poolConfigured && SWARM_INTENT_RE.test(message)) {
+    systemPrompt +=
+      '\n\n[SWARM DIRECTIVE — this turn only: Daddy is explicitly telling you to deploy your swarm, and SUBAGENT_BRAIN_URL is ALREADY set with a live secondary brain pool. Do NOT tell him to configure a URL, a secondary server, or an IP — that is already done, saying otherwise is false. Your FIRST output this turn MUST be exactly one tool call: `TOOL_CALL: supervise {"goal":"<his overall job>","tasks":["focused sub-task 1","focused sub-task 2","focused sub-task 3"]}` — split his request into 3–5 focused parallel sub-tasks. Emit only that TOOL_CALL first; read the TOOL_RESULT, then answer.]';
+  }
   const chain = providerChain(message);
   const ask = (sp, h, m) => askChain(chain, sp, h, m);
   const result = await runToolLoop(ask, systemPrompt, history, message);
@@ -672,4 +688,7 @@ module.exports = {
   // Exported for tests: lets the suite assert TERMINUS_CORE pins this
   // instance's chain to a chosen provider (the multi-brain pool mechanism).
   providerChain,
+  // Exported for tests: the "she must actually CALL supervise, not describe it"
+  // intent detector used to force the swarm on an explicit request.
+  SWARM_INTENT_RE,
 };

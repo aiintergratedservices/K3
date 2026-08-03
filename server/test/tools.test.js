@@ -179,6 +179,26 @@ const ok = (m) => { console.log('  ✓', m); n++; };
     ok('supervise batches the fan-out and never exceeds SWARM_MAX_CONCURRENCY');
   }
 
+  // --- swarm-intent detection (forces supervise instead of confabulating) ---
+  {
+    const re = brain.SWARM_INTENT_RE;
+    for (const yes of [
+      'Deploy your swarm and research three hosts',
+      'use your sub-agents to compare these',
+      'fire the swarm on this',
+      'spin up your brain pool',
+      'unleash your subagents',
+      'run supervise across your other brains',
+    ]) assert(re.test(yes), `should detect swarm intent: "${yes}"`);
+    for (const no of [
+      'how are you today?',
+      'what time is it',
+      'tell me about bees',
+      'I deployed the app to the server', // "deploy" but not the swarm
+    ]) assert(!re.test(no), `should NOT trip on: "${no}"`);
+    ok('swarm-intent detector fires on explicit swarm requests only');
+  }
+
   // --- the agentic loop end-to-end with a mock model ---
   // Round 0: she asks for the time. Round 1: she answers using the result.
   let turn = 0;
