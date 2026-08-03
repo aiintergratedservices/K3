@@ -141,6 +141,24 @@ async function webFetch(url) {
   } catch (e) { return `fetch error: ${e.message}`; }
 }
 
+// --- Sub-agent ROLES (CrewAI/AutoGen-style specialization) --------------------
+// A supervisor sub-task can be handed to a specialist instead of a generalist.
+// The role only reshapes the sub-agent's framing/instructions — it does NOT pin
+// a provider (that's `brain`/consult_specialist). Keep the set small and real.
+const ROLES = {
+  generalist: 'a focused generalist — do exactly the task and return just the result',
+  researcher: 'a RESEARCHER — gather facts, cite what you rely on, separate what you verified from what you inferred, and flag gaps',
+  planner:    'a PLANNER — break the task into an ordered, concrete plan with clear steps and dependencies; no fluff',
+  coder:      'a CODER — return working, minimal code plus a one-line note on how to run/verify it; state assumptions',
+  critic:     'a CRITIC — find the flaws, risks, and weakest assumptions in the material; be specific and constructive, do not rewrite it',
+  writer:     'a WRITER — produce clear, tight prose in the requested voice; no filler',
+  analyst:    'an ANALYST — compare options on explicit criteria and give a ranked recommendation with the trade-offs',
+};
+const roleOf = (r) => {
+  const k = String(r || '').trim().toLowerCase();
+  return ROLES[k] ? k : 'generalist';
+};
+
 // --- Tool registry: name -> { desc, run(args) }. ---
 const TOOLS = {
   web_search: {
@@ -578,14 +596,25 @@ const TOOLS = {
     },
   },
   supervise: {
-    desc: 'Be the SUPERVISOR over several sub-agents at once for ANY job (not just code): you split it into focused sub-tasks, they run IN PARALLEL on your secondary brain, you monitor each (ok/failed/timeout), then one final pass synthesizes their results into a single answer. Use it whenever a task is big enough to split — research from several angles, compare options, draft + fact-check, multi-part work. When Daddy gives you SEVERAL directives at once, call supervise once PER directive and pin each to its own brain (see `brain`) so a different brain regulates each supervisor and they never contend. args: {"goal":"the overall job","tasks":["focused sub-task 1","sub-task 2", ...],"context":"optional shared background","brain":"optional — pin THIS supervisor to one brain: a 1-based number into your FUNCTIONAL-FIRST pool (1 = your first working brain) or a substring of its URL. Omit to round-robin across every LIVE brain. Brains still needing an API key sink to the bottom and are never used until keyed."}. Needs SUBAGENT_BRAIN_URL; declines honestly if unset. Only brains actually firing right now (reachable + a live core) are used; keyless ones are parked at the bottom.',
+    desc: 'Be the SUPERVISOR over several sub-agents at once for ANY job (not just code): split it into focused sub-tasks, they run on your secondary brains, you monitor each (ok/failed/timeout), then one pass synthesizes their results into a single answer. Use it whenever a task is big enough to split — research from several angles, compare options, draft + fact-check, multi-part work. Each sub-task can be a plain string OR {"task":"...","role":"..."} to give it a SPECIALIST (roles: planner, coder, critic, researcher, writer, analyst; unlabeled = generalist) — CrewAI/AutoGen-style. Default runs them IN PARALLEL; pass "mode":"pipeline" to run them IN ORDER with SHARED STATE (each sub-agent sees the earlier ones\' results — for planner→coder→critic style stateful workflows). When Daddy gives SEVERAL directives at once, call supervise once PER directive and pin each to its own brain (see `brain`). args: {"goal":"the overall job","tasks":["sub-task 1", {"task":"sub-task 2","role":"critic"}, ...],"mode":"parallel|pipeline","context":"optional shared background","brain":"optional — pin THIS supervisor to one brain: a 1-based number into your FUNCTIONAL-FIRST pool (1 = your first working brain) or a substring of its URL. Omit to round-robin across every LIVE brain."}. Needs SUBAGENT_BRAIN_URL; declines honestly if unset. Only brains firing right now (reachable + a live core) are used; keyless ones are parked at the bottom.',
     run: async (a) => {
       const goal = clip(a.goal || a.task || '', 500);
+      // A task may be a plain string OR an object {task, role}. Normalize to
+      // {task, role}: `role` gives that sub-agent a specialist framing (planner,
+      // coder, critic, researcher, writer, analyst) — CrewAI/AutoGen-style — while
+      // an unlabeled task stays a generalist. Unknown roles fall back to generalist.
+      const norm = (t) => (t && typeof t === 'object')
+        ? { task: clip(String(t.task || t.goal || t.description || ''), 600), role: roleOf(t.role) }
+        : { task: clip(String(t || ''), 600), role: 'generalist' };
       let tasks = (Array.isArray(a.tasks) ? a.tasks : [])
-        .map((t) => String(t || '').trim()).filter(Boolean).slice(0, 6);
+        .map(norm).filter((t) => t.task).slice(0, 6);
       if (tasks.length < 2) {
-        return 'refused: give me `tasks` — 2 to 6 focused sub-tasks to run in parallel under you. For a single task use spawn_subagent instead; supervise is for real fan-out.';
+        return 'refused: give me `tasks` — 2 to 6 focused sub-tasks to run under you. Each may be a plain string or {"task":"...","role":"planner|coder|critic|researcher|writer|analyst"}. For a single task use spawn_subagent instead; supervise is for real fan-out.';
       }
+      // mode: "parallel" (default, fan out at once) or "pipeline"/"sequential"
+      // (run in order, each sub-agent SEES the earlier ones' results — shared
+      // state, for planner→coder→critic style stateful workflows).
+      const mode = /^(pipeline|sequential|chain|stateful)$/i.test(String(a.mode || '')) ? 'pipeline' : 'parallel';
       // One or more secondary brains (comma-separated) — sub-agents run here so
       // your own brain stays free for Daddy. You are the one supervisor on top.
       const configured = String(process.env.SUBAGENT_BRAIN_URL || '')
@@ -676,17 +705,40 @@ const TOOLS = {
         await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
         return out;
       };
+      // Build one sub-agent's prompt: its ROLE framing + the goal + shared
+      // context + (in pipeline mode) the results earlier sub-agents produced.
+      const buildPrompt = (t, i, sharedState) =>
+        `You are sub-agent ${i + 1} of ${tasks.length}, spawned by Kortana's supervisor. Your role: you are ${ROLES[t.role]}.\nReply with just your result, concise. If you can't, say why briefly.\n\nOverall goal: ${goal || '(see your sub-task)'}${context ? `\nShared context: ${context}` : ''}${sharedState ? `\n\nResults from earlier sub-agents — build on these, don't repeat them:\n${sharedState}` : ''}\n\nYour sub-task: ${t.task}`;
+
       const started = Date.now();
-      const runs = await runLimited(tasks, maxConc, (t, i) => {
-        const base = bases[i % bases.length];
-        const prompt = `You are sub-agent ${i + 1} of ${tasks.length}, spawned by Kortana's supervisor. Do ONLY your assigned sub-task and reply with just the result, concise. If you can't, say why briefly.\n\nOverall goal: ${goal || '(see your sub-task)'}${context ? `\nShared context: ${context}` : ''}\n\nYour sub-task: ${t}`;
-        return ask(base, prompt, 90000);
-      });
+      let runs;
+      if (mode === 'pipeline') {
+        // Sequential + stateful: each sub-agent sees everything produced before
+        // it, so roles can chain (planner → coder → critic). One at a time keeps
+        // the phone's memory flat regardless of SWARM_MAX_CONCURRENCY.
+        runs = [];
+        let sharedState = '';
+        for (let i = 0; i < tasks.length; i++) {
+          const base = bases[i % bases.length];
+          try {
+            const value = await ask(base, buildPrompt(tasks[i], i, sharedState), 90000);
+            runs.push({ status: 'fulfilled', value });
+            sharedState += `${sharedState ? '\n\n' : ''}[#${i + 1} ${tasks[i].role}] ${clip(tasks[i].task, 100)}\n${clip(value || '(empty)', 800)}`;
+          } catch (e) {
+            runs.push({ status: 'rejected', reason: e });
+            sharedState += `${sharedState ? '\n\n' : ''}[#${i + 1} ${tasks[i].role}] FAILED — ${clip(tasks[i].task, 100)}`;
+          }
+        }
+      } else {
+        runs = await runLimited(tasks, maxConc, (t, i) =>
+          ask(bases[i % bases.length], buildPrompt(t, i, ''), 90000));
+      }
 
       // Monitor — collect each sub-agent's status and result.
       const results = runs.map((r, i) => ({
         n: i + 1,
-        task: clip(tasks[i], 120),
+        role: tasks[i].role,
+        task: clip(tasks[i].task, 120),
         ok: r.status === 'fulfilled' && !!r.value,
         out: r.status === 'fulfilled' ? (r.value || '(empty)') : `FAILED: ${(r.reason && r.reason.message) || r.reason}`,
       }));
@@ -697,7 +749,7 @@ const TOOLS = {
       let synthesis = '';
       if (okCount) {
         const merged = results
-          .map((r) => `[sub-agent ${r.n} — ${r.ok ? 'ok' : 'FAILED'}] ${r.task}\n${clip(r.out, 1200)}`)
+          .map((r) => `[sub-agent ${r.n} — ${r.role} — ${r.ok ? 'ok' : 'FAILED'}] ${r.task}\n${clip(r.out, 1200)}`)
           .join('\n\n');
         try {
           synthesis = await ask(bases[0],
@@ -706,12 +758,13 @@ const TOOLS = {
         } catch (e) { synthesis = `(synthesis step failed: ${e.message})`; }
       }
 
-      const table = results.map((r) => `  ${r.ok ? '✓' : '✗'} #${r.n} ${r.task}`).join('\n');
+      const table = results.map((r) => `  ${r.ok ? '✓' : '✗'} #${r.n} [${r.role}] ${r.task}`).join('\n');
       const took = Math.round((Date.now() - started) / 1000);
       const where = pinned
         ? `pinned to brain ${pinned}`
         : `across ${bases.length} brain(s)`;
-      return `supervisor ran ${tasks.length} sub-agents (${okCount} ok, ${tasks.length - okCount} failed) in ${took}s ${where}:\n${table}\n\n— synthesis —\n${synthesis || '(all sub-agents failed — nothing to synthesize)'}\n\n(You spawned these; sanity-check before you trust it.)`;
+      const how = mode === 'pipeline' ? 'in a stateful pipeline' : 'in parallel';
+      return `supervisor ran ${tasks.length} sub-agents ${how} (${okCount} ok, ${tasks.length - okCount} failed) in ${took}s ${where}:\n${table}\n\n— synthesis —\n${synthesis || '(all sub-agents failed — nothing to synthesize)'}\n\n(You spawned these; sanity-check before you trust it.)`;
     },
   },
   ews_report: {

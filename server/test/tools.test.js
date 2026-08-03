@@ -170,13 +170,64 @@ const ok = (m) => { console.log('  ✓', m); n++; };
     process.env.SUBAGENT_BRAIN_URL = `http://127.0.0.1:${port}`;
     process.env.SWARM_MAX_CONCURRENCY = '2';
     r = await tools.runTool('supervise', { goal: 'g', tasks: ['t1', 't2', 't3', 't4', 't5'] });
-    assert(r.ok && /supervisor ran 5 sub-agents \(5 ok/.test(r.result), 'all 5 sub-agents should complete');
+    assert(r.ok && /supervisor ran 5 sub-agents in parallel \(5 ok/.test(r.result), 'all 5 sub-agents should complete');
     assert(maxInflight <= 2, `fan-out exceeded the cap: peak ${maxInflight} concurrent (limit 2)`);
     assert(maxInflight >= 2, `expected real batching up to the cap, saw peak ${maxInflight}`);
     await new Promise((resolve) => srv.close(resolve));
     if (savedUrl == null) delete process.env.SUBAGENT_BRAIN_URL; else process.env.SUBAGENT_BRAIN_URL = savedUrl;
     if (savedConc == null) delete process.env.SWARM_MAX_CONCURRENCY; else process.env.SWARM_MAX_CONCURRENCY = savedConc;
     ok('supervise batches the fan-out and never exceeds SWARM_MAX_CONCURRENCY');
+  }
+
+  // --- supervise: specialist ROLES + stateful PIPELINE (shared state) ---
+  {
+    const http = require('http');
+    const received = [];
+    let calls = 0;
+    const srv = http.createServer((req, res) => {
+      if (req.method === 'GET' && req.url === '/health') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ cores: { groq: true } }));
+      }
+      if (req.method === 'POST' && req.url === '/api/brain') {
+        let body = '';
+        req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          received.push((JSON.parse(body || '{}').message) || '');
+          const id = ++calls;
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ reply: `RESULT_${id}` }));
+        });
+        return;
+      }
+      res.writeHead(404); res.end();
+    });
+    await new Promise((rr) => srv.listen(0, '127.0.0.1', rr));
+    const port = srv.address().port;
+    const savedUrl = process.env.SUBAGENT_BRAIN_URL;
+    process.env.SUBAGENT_BRAIN_URL = `http://127.0.0.1:${port}`;
+
+    // Roles: each sub-agent gets its specialist framing, and the report shows it.
+    received.length = 0; calls = 0;
+    let rr = await tools.runTool('supervise', { goal: 'g', tasks: [
+      { task: 'lay out the steps', role: 'planner' },
+      { task: 'poke holes in the plan', role: 'critic' },
+    ] });
+    assert(rr.ok && /\[planner\]/.test(rr.result) && /\[critic\]/.test(rr.result), 'roles shown in the report');
+    assert(received.some((m) => /you are a PLANNER/i.test(m)), 'planner framing reached a sub-agent');
+    assert(received.some((m) => /you are a CRITIC/i.test(m)), 'critic framing reached a sub-agent');
+
+    // Pipeline: sequential, and each sub-agent sees the earlier ones' results.
+    received.length = 0; calls = 0;
+    rr = await tools.runTool('supervise', { goal: 'g', mode: 'pipeline', tasks: ['first', 'second', 'third'] });
+    assert(rr.ok && /in a stateful pipeline/.test(rr.result), 'pipeline mode is labeled');
+    assert(received.length >= 3, 'all three sub-agents ran');
+    assert(/RESULT_1/.test(received[1]), 'sub-agent 2 saw sub-agent 1 output (shared state)');
+    assert(/RESULT_1/.test(received[2]) && /RESULT_2/.test(received[2]), 'sub-agent 3 saw both prior outputs');
+
+    await new Promise((rr2) => srv.close(rr2));
+    if (savedUrl == null) delete process.env.SUBAGENT_BRAIN_URL; else process.env.SUBAGENT_BRAIN_URL = savedUrl;
+    ok('supervise supports specialist roles and a stateful pipeline (shared state)');
   }
 
   // --- swarm-intent detection (forces supervise instead of confabulating) ---
