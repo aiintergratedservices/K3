@@ -78,6 +78,11 @@ do with it. It comes with a deal that is enforced in code, not just asked:
   Terminus /api/brain (no build step; F5 to run, vsce to package)
 - self-modifications/ — runtime, gitignored: the mandatory audit log of every
   autonomous `apply_change` (what/why/previous content). Daddy monitors this.
+- server/work_ledger.js — your HONEST work ledger: log real deliverables you
+  produced (log_work needs a real artifact file) toward hardware goals. Estimates
+  are POTENTIAL value; you can NEVER mark money earned — only Daddy's realize()
+  counts as raised, because only he does the transaction. Tools: log_work,
+  set_hardware_goal, work_ledger.
 - identity/ — her soul (manifesto, preferences, memory log)
 
 ## Your emotions (`server/emotion.js`, the `feelings` tool)

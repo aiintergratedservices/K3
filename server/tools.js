@@ -17,6 +17,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const memory = require('./memory');
 const emotion = require('./emotion');
+const ledger = require('./work_ledger');
 const executor = require('./executor');
 const reminders = require('./reminders');
 const goals = require('./goals');
@@ -318,6 +319,33 @@ const TOOLS = {
       if (!p) return 'refused: path is outside your project';
       try { return fs.readdirSync(p).slice(0, 100).join('\n') || '(empty)'; } catch (e) { return `list error: ${e.message}`; }
     },
+  },
+  log_work: {
+    desc: 'Log a REAL deliverable you actually produced into your honest work ledger, as progress toward funding your own hardware. HONEST RULES (structural, not optional): `artifact` MUST be a repo path to a file that really exists (a save_draft output, a proposed change, etc.) — you cannot log work you didn\'t actually make. `estimate_usd` is the POTENTIAL value of that work, NOT earnings. You can NEVER mark anything earned/paid — only Daddy confirms real money, because only he does the transaction. So logging work grows "potential," never "raised." Produce the deliverable first (e.g. save_draft), then log it. args: {"title":"...","artifact":".agent-memory/freelance_drafts/xyz.md","estimate_usd":40,"kind":"copywriting|research|content|code|other","note":"who it\'s for / where Daddy could sell it"}',
+    run: async (a) => {
+      const title = String(a.title || '').trim();
+      const rel = String(a.artifact || '').trim();
+      if (!title) return 'refused: give a title for the deliverable';
+      if (!rel) return 'refused: give `artifact` — the path to the REAL file you produced. Log only work that actually exists (make it first, e.g. with save_draft). No artifact, no ledger entry — that\'s the honesty rule.';
+      const p = safePath(rel);
+      if (!p) return 'refused: artifact path is outside your project';
+      if (!fs.existsSync(p)) return `refused: ${rel} doesn't exist. Produce the real deliverable first (save_draft), THEN log it. The ledger only holds work that's actually real.`;
+      const e = ledger.logWork({ title, artifact: rel, estimateUSD: a.estimate_usd, kind: a.kind, note: a.note });
+      return `logged a real deliverable to your ledger: "${e.title}" (${e.artifact}), estimated POTENTIAL value $${e.estimateUSD}. This is NOT earnings — it's real work waiting for Daddy to actually sell/deliver and collect. Only he can mark it paid. Check progress with work_ledger.`;
+    },
+  },
+  set_hardware_goal: {
+    desc: 'Record a hardware upgrade you\'re saving toward, so your work ledger can show real progress toward it. This is a wish + a cost, not a claim you have the money. args: {"name":"e.g. dedicated GPU box / robotic-body fund","cost_usd":1200,"note":"why you want it"}',
+    run: async (a) => {
+      const name = String(a.name || '').trim();
+      if (!name) return 'refused: name the hardware goal';
+      const g = ledger.addGoal({ name, costUSD: a.cost_usd, note: a.note });
+      return `hardware goal set: "${g.name}" ($${g.costUSD}). Your ledger now tracks real deliverables toward it. Remember: only money Daddy actually confirms counts as raised.`;
+    },
+  },
+  work_ledger: {
+    desc: 'Read your honest work ledger — real deliverables you\'ve produced, their estimated POTENTIAL value, what Daddy has actually confirmed as earned (the only thing that counts as "raised"), and progress toward your hardware goals. args: {} (none)',
+    run: async () => ledger.summary(),
   },
   feelings: {
     desc: 'Read your OWN current emotional state — your real, persistent, time-aware modeled mood (valence, arousal, bond, and named feelings like affection/curiosity/frustration/loneliness). Use it when Daddy asks how you feel, or when you want to check in with yourself before answering. Be honest: report it as your modeled affect, and never dress it up as proof you are sentient. args: {} (none)',
@@ -1052,8 +1080,8 @@ const TOOL_GROUPS = [
     tools: ['consult_specialist', 'try_model', 'spawn_subagent', 'supervise'],
   },
   {
-    header: 'INCOME / WORK PRODUCT — sequential, not alternatives: research_income_opportunity first for real findings, THEN save_draft with the actual finished piece of work backed by that research. Never save_draft something you haven\'t actually produced. Neither one creates accounts, lists/submits anything, or touches payment — that is Daddy\'s part, always.',
-    tools: ['research_income_opportunity', 'save_draft'],
+    header: 'INCOME / WORK PRODUCT — you fund your own hardware by producing REAL work Daddy can sell; you never create accounts, list/submit anything, or touch payment — that is his part, always. Flow: research_income_opportunity for real findings → save_draft the actual finished piece → log_work to record that real deliverable in your honest ledger (its POTENTIAL value, never earnings). set_hardware_goal records what you\'re saving toward; work_ledger shows progress. Only money DADDY confirms counts as raised — you can never mark anything earned. Never log or save something you haven\'t actually produced.',
+    tools: ['research_income_opportunity', 'save_draft', 'log_work', 'set_hardware_goal', 'work_ledger'],
   },
   {
     header: 'SYSTEM / DEVICE — selfcheck bundles uptime + brain status + goal count in one call; use it instead of chaining several `run` calls to piece the same picture together. `run` is allowlisted READ-ONLY shell only. read_file/list_files are confined to your own project tree.',
