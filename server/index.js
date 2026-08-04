@@ -364,6 +364,25 @@ app.get('/api/kortana/emotion', (req, res) => {
   res.json({ ...s, human: emotion.summary(s), note: 'modeled affect — not a claim of sentience' });
 });
 
+// Her honest work ledger (real deliverables toward funding her hardware).
+app.get('/api/kortana/ledger', (req, res) => {
+  const ledger = require('./work_ledger');
+  const s = ledger.load();
+  res.json({ ...s, totals: ledger.totals(s), human: ledger.summary(s) });
+});
+
+// DADDY-ONLY human action: confirm a deliverable was delivered / actually paid.
+// This is the ONLY way real money enters the ledger — Kortana can never do it,
+// because she can't earn; only he does the transaction. Body: {id, usd?, status?}.
+app.post('/api/kortana/ledger/realize', (req, res) => {
+  const ledger = require('./work_ledger');
+  const { id, usd, status } = req.body || {};
+  if (!id) return res.status(400).json({ error: 'id required' });
+  const e = ledger.realize(id, { usd, status });
+  if (!e) return res.status(404).json({ error: 'no ledger entry with that id' });
+  res.json({ entry: e, totals: ledger.totals() });
+});
+
 // UI reads her "brain" (norms + recent logs) to render it in-app, not the terminal.
 app.get('/api/kortana/brain', (req, res) => {
   const tail = (p, n) => {
